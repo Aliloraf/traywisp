@@ -1,0 +1,33 @@
+<Project>
+
+  <!--
+    Architecture rule: allowed project references for each production project.
+    See docs/architecture.md. Test projects are not restricted by this check.
+  -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'TrayWisp.Core'">
+    <TrayWispCheckProjectReferences>true</TrayWispCheckProjectReferences>
+    <TrayWispAllowedProjectReferences></TrayWispAllowedProjectReferences>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'TrayWisp.Runtime'">
+    <TrayWispCheckProjectReferences>true</TrayWispCheckProjectReferences>
+    <TrayWispAllowedProjectReferences>TrayWisp.Core</TrayWispAllowedProjectReferences>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'TrayWisp.Cli' or '$(MSBuildProjectName)' == 'TrayWisp.Desktop'">
+    <TrayWispCheckProjectReferences>true</TrayWispCheckProjectReferences>
+    <TrayWispAllowedProjectReferences>TrayWisp.Core;TrayWisp.Runtime</TrayWispAllowedProjectReferences>
+  </PropertyGroup>
+
+  <Target Name="TrayWispValidateProjectReferences"
+          BeforeTargets="ResolveProjectReferences"
+          Condition="'$(TrayWispCheckProjectReferences)' == 'true'">
+    <ItemGroup>
+      <_TrayWispAllowedReference Include="$(TrayWispAllowedProjectReferences)" />
+      <_TrayWispDisallowedReference Include="@(ProjectReference->'%(Filename)')" />
+      <_TrayWispDisallowedReference Remove="@(_TrayWispAllowedReference)" />
+    </ItemGroup>
+    <Error Condition="'@(_TrayWispDisallowedReference)' != ''"
+           Code="TW0001"
+           Text="$(MSBuildProjectName) must not reference: @(_TrayWispDisallowedReference, ', '). Allowed project references: '$(TrayWispAllowedProjectReferences)'. See docs/architecture.md." />
+  </Target>
+
+</Project>

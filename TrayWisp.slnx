@@ -1,0 +1,19 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TrayWisp.Core/TrayWisp.Core.csproj" />
+    <Project Path="src/TrayWisp.Runtime/TrayWisp.Runtime.csproj" />
+    <Project Path="src/TrayWisp.Cli/TrayWisp.Cli.csproj" />
+    <Project Path="src/TrayWisp.Desktop/TrayWisp.Desktop.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TrayWisp.Core.Tests/TrayWisp.Core.Tests.csproj" />
+    <Project Path="tests/TrayWisp.Runtime.Tests/TrayWisp.Runtime.Tests.csproj" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Build.targets" />
+    <File Path="Directory.Packages.props" />
+    <File Path="global.json" />
+  </Folder>
+</Solution>

@@ -1,0 +1,15 @@
+<Window x:Class="TrayWisp.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TrayWisp"
+        Width="480"
+        Height="220"
+        ResizeMode="CanMinimize"
+        WindowStartupLocation="CenterScreen">
+    <StackPanel Margin="24" VerticalAlignment="Center">
+        <TextBlock FontSize="24" FontWeight="SemiBold" Text="TrayWisp" />
+        <TextBlock x:Name="VersionText" Margin="0,4,0,0" Foreground="Gray" />
+        <TextBlock Margin="0,16,0,0" TextWrapping="Wrap"
+                   Text="Development build. Plugin discovery, script execution, the system tray icon and the dashboard are not implemented yet." />
+    </StackPanel>
+</Window>

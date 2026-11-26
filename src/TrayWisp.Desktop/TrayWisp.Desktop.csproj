@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TrayWisp.Core\TrayWisp.Core.csproj" />
+    <ProjectReference Include="..\TrayWisp.Runtime\TrayWisp.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>
