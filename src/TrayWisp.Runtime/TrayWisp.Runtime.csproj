@@ -1,8 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Platform-independent plugin discovery, execution and scheduling. May reference TrayWisp.Core only. -->
+  <!-- Plugin discovery, trust and approval; execution and scheduling (planned). May reference TrayWisp.Core only. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <!-- Required by LibraryImport, used for the few Windows file APIs the trust checks need (Trust/WindowsFileApi.cs). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

@@ -16,8 +16,8 @@ public static class PluginDiscovery
     private const FileAttributes Pinned = (FileAttributes)0x0008_0000;
     private const FileAttributes Unpinned = (FileAttributes)0x0010_0000;
     private const FileAttributes RecallOnDataAccess = (FileAttributes)0x0040_0000;
-    private const FileAttributes RemoteStorage = FileAttributes.Offline | RecallOnOpen | RecallOnDataAccess;
-    private const FileAttributes CloudSync = RemoteStorage | Pinned | Unpinned;
+    internal const FileAttributes RemoteStorage = FileAttributes.Offline | RecallOnOpen | RecallOnDataAccess;
+    internal const FileAttributes CloudSync = RemoteStorage | Pinned | Unpinned;
 
     // Hidden and system entries are returned so that the skip rules below are applied explicitly.
     private static readonly EnumerationOptions ListingOptions = new()
@@ -226,7 +226,7 @@ public static class PluginDiscovery
         return groupStart;
     }
 
-    private static EntryKind Classify(FileSystemInfo entry, out PluginFileNameParseResult? fileName)
+    internal static EntryKind Classify(FileSystemInfo entry, out PluginFileNameParseResult? fileName)
     {
         fileName = null;
         FileAttributes attributes = entry.Attributes;

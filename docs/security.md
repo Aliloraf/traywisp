@@ -1,13 +1,13 @@
 # Security model
 
-TrayWisp's core job is to run scripts on your behalf, so its security model has to be stated plainly. This document describes the trust model, the plugin discovery safeguards that are **implemented**, and the safeguards **planned** for plugin execution. **As of Phase 2, TrayWisp discovers plugin files, reads their metadata and can parse plugin output text, but it does not execute plugins or act on their output.** Apart from [Plugin discovery](#plugin-discovery-implemented) and [Output parsing](#output-parsing-implemented), none of the controls below are implemented yet. They are design commitments that later phases (see [roadmap.md](roadmap.md)) must meet or explicitly revise.
+TrayWisp's core job is to run scripts on your behalf, so its security model has to be stated plainly. This document describes the trust model, the plugin discovery, output parsing and approval safeguards that are **implemented**, and the safeguards **planned** for plugin execution. **As of Phase 3, TrayWisp discovers plugin files, reads their metadata, parses plugin output text, and records explicit approvals with an authoritative trust check, but it does not execute plugins or act on their output.** Nothing calls the trust check yet. Apart from [Plugin discovery](#plugin-discovery-implemented), [Output parsing](#output-parsing-implemented) and [Plugin approval](#plugin-approval-implemented), none of the controls below are implemented yet. They are design commitments that later phases (see [roadmap.md](roadmap.md)) must meet or explicitly revise.
 
 To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 
 ## Trust model
 
 - **A plugin is arbitrary code.** A plugin script runs as a normal process under your Windows user account, with the same access you have: your files, your network, your credentials stored for your account, and the ability to start other programs. Running a plugin through TrayWisp is equivalent to running the script yourself.
-- **Approval is consent, not containment.** TrayWisp will not run a plugin until you approve it. Approval only records that you chose to trust that script. It does not restrict what the script can do. **User approval is not sandboxing.**
+- **Approval is consent, not containment.** TrayWisp will not run a plugin until you approve it (the approval and trust check exist; execution does not yet). Approval only records that you chose to trust that script. It does not restrict what the script can do. **User approval is not sandboxing.**
 - **TrayWisp does not sandbox plugins.** See [Process isolation limitations](#process-isolation-limitations).
 - **Plugin output is untrusted data.** Even an approved plugin may print content it fetched from elsewhere, such as web pages or API responses. TrayWisp will treat output as data to display, never as code to evaluate, except for the explicit action features described below, which run with the plugin's own trust.
 
@@ -25,7 +25,7 @@ TrayWisp aims to:
 TrayWisp does **not**:
 
 - Sandbox plugins or restrict their access to files, the registry, the network or other processes.
-- Guarantee that the content you approved is exactly the content that runs (see [Explicit approval](#explicit-approval)).
+- Guarantee that the content you approved is exactly the content that runs (see [Plugin approval](#plugin-approval-implemented)).
 - Guarantee that every process a plugin starts is terminated (see [Process-tree termination](#process-tree-termination)).
 - Undo anything a plugin has already done.
 
@@ -69,24 +69,42 @@ The output parser (Phase 2, specified in [output-protocol.md](output-protocol.md
 
 Limitations: homoglyphs, zero-width characters inside visible text and lookalike domains are not detected; display surfaces should show the exact URL or command behind an action. If a plugin passes untrusted data (for example an API response) into its own action parameters, the parser cannot tell.
 
-## Planned safeguards
+## Plugin approval (implemented)
 
-### Explicit approval
+Approval (Phase 3, specified in [trust-model.md](trust-model.md)) records explicit consent and provides the one trust check that execution will use:
 
-- Newly discovered plugins start in a *pending* state and do not run.
-- Approval is bound to the normalized **plugin root**, the plugin's **identity** (its root-relative path, see [plugin-format.md](plugin-format.md#identity)) and a SHA-256 hash of its contents. The identity alone is not enough: the same relative path under another root is a different file. If the file changes, approval lapses and the plugin stops running until you approve it again.
-- **Time-of-check/time-of-use (TOCTOU).** TrayWisp checks the hash, but the interpreter later opens and reads the file by path on its own. Between the check and the read, anything that can write to the plugin file or to the directories on its path can change the contents, or redirect the path with a symbolic link or junction. Planned mitigations are to re-verify immediately before every launch and to resolve the path to its final target. These narrow the window but do **not** eliminate it. Read an approval as "this content was trusted when it was checked", not as a guarantee that exactly this content runs.
+- **Pending by default.** Newly discovered plugins have no approval and are `PendingApproval`. Discovery, metadata, successful parsing, file existence, timestamps and earlier approvals never authorize anything. There is no implicit, wildcard, directory-wide or author-based approval.
+- **Bound to root, identity and content.** An approval is bound to the normalized **plugin root**, the plugin's **identity** (its root-relative path, see [plugin-format.md](plugin-format.md#identity)) and the SHA-256 of the **entire raw file**. The identity alone is not enough: the same relative path under another root is a different plugin.
+- **Explicit approval of reviewed content.** `Approve` requires the fingerprint the user reviewed. Under the store lock it validates the path again and rehashes the file immediately before saving, and refuses if the content differs. A caller-supplied hash is never taken as proof of the file's content.
+- **One authoritative check.** `PluginTrustService.CheckTrust` reads the persisted approval and hashes the complete current file under the store lock every time. Only `Approved` permits execution. Nothing is cached. An approved decision also returns `ValidatedFilePath`, the exact file (with its on-disk spelling) that was validated and hashed; execution must launch that path from the immediate check, never a path rebuilt from the case-insensitive identity.
+- **Invalidation.** When a check, or an approval request, observes different content, the obsolete approval is removed persistently and is not restored if the old bytes return. Explicit reapproval is required. A rejected approval request does not preserve an obsolete approval. Missing, locked, unreadable, oversized or unsafe files deny the plugin at that moment but are not treated as a change, so their approval is kept. Absence from discovery results never removes an approval.
+- **Unsaved invalidations.** If the removal cannot be written, the service instance that observed the change keeps denying that approval, even if the old bytes return, and retries the removal. This memory is bounded and only denies, but it exists only in that instance: other instances, other processes and a restarted TrayWisp see the old approval in the store. Hosts must therefore use one long-lived trust service per store. See [trust-model.md](trust-model.md#unsaved-invalidations).
+- **Stale output.** Each approval has a random generation. Revocation followed by reapproval, even of the same bytes, creates a new one, and `CheckTrust(approvalIdentity)` rejects identities that are no longer current. Output-driven actions will be checked this way.
+- **Conservative paths.** Only local drive paths are supported. Relative, drive-relative, UNC, device-namespace and alternate-data-stream paths are rejected, as are reparse points, offline or cloud placeholders, hidden or dot-prefixed entries, case collisions, case-sensitive ancestors of the root, short-name and `subst` aliases, and network drives. Each component is opened without following links, checked through its handle and held open, and the file's final path is verified with `GetFinalPathNameByHandle`.
+- **Bounded, strict, atomic store.** Approvals live in a versioned JSON file under `%LOCALAPPDATA%\TrayWisp\trust`, read strictly and all or nothing (unknown fields, duplicates and invalid values reject the whole store, which is then never partially trusted or silently replaced), synchronized between processes with a lock file, and replaced atomically through a flushed temporary file in the same directory. The store directory is held open during each operation; the lock, store and temporary files must be single-link regular files at their configured paths; case-sensitive store directories are rejected; and the directory's final path is checked again before publication. Roots and identities that are not well-formed UTF-16 are rejected, so every stored string reads back exactly.
+- **Bounded.** 16 MiB per plugin file (never partially hashed), 4 MiB and 4,096 records per store, 10,000 directory entries per validation, 64 diagnostics per result, a bounded lock wait.
+
+Limitations (details in [trust-model.md](trust-model.md#security-guarantees-and-limitations)):
+
+- **Time of check to time of use (TOCTOU).** TrayWisp checks the hash, but the interpreter will later open and read the file by path on its own. Between the check and the read, anything that can write to the plugin file or to the directories on its path can change the contents, or redirect the path with a link. During a trust operation, TrayWisp holds the file and its directories open so they cannot be changed or renamed, but nothing holds them afterwards. Phase 4 must re-check immediately before every launch. This narrows the window but does **not** eliminate it. The validated path only guarantees that the launched path names the file that was checked. Read an approval as "this content was trusted when it was checked", not as a guarantee that exactly this content runs.
+- **Memory-mapped writers.** A process that mapped the plugin file for writing before the check can change it despite the sharing mode, also during hashing.
+- **Unsaved invalidations across instances.** An invalidation that could not be written is unknown to other service instances, other processes and later sessions. If the old bytes are restored before it is saved, they approve the old approval.
+- **Same-user tampering.** The approval store is an ordinary file in your profile. Any program running as you can edit it. It is not signed or encrypted. The store directory is held during an operation, but its ancestors are not, and a short window remains between the last directory check and the rename that publishes an update. Approval detects unnoticed changes to plugins. It does not defend against malware already running as you.
+- **Hard links.** Hard-linked plugin files are accepted (changes through another link are still detected by the hash). Hard-linked store and lock files are rejected.
 - **Scope of the hash.** It covers only the plugin file. It does not cover modules the script imports, files it reads, the interpreter, or anything the script downloads. An approved script can still change its behaviour through any of those.
+- **Not network isolation.** Only what Windows reports as remote (UNC paths, network drives) is rejected. A local-looking volume backed by network storage is not detected.
 - In practice, anyone who can write to your plugin directory can usually run code as you anyway, so these risks matter most when that directory's permissions are weaker than expected (see [Plugin directory](#plugin-directory)).
+
+## Planned safeguards
 
 ### Trust checks on every execution path
 
-Approval is useful only if no execution path can skip it. The applicable trust checks will be enforced on:
+Approval is useful only if no execution path can skip it. The trust check itself (`PluginTrustService.CheckTrust`) is implemented. Its enforcement on these paths is planned:
 
 - Scheduled runs, including runs triggered by hot reload.
 - Manual runs from the system tray or the plugin management interface.
 - CLI commands that run a plugin.
-- Output-driven actions. An action is allowed only if the plugin that produced it is still approved with the same content hash at the moment you activate it. Actions from output produced before a revocation or a file change are disabled.
+- Output-driven actions. An action is allowed only if the plugin that produced it is still approved under the same approval identity (content hash and approval generation) at the moment you activate it, checked with `CheckTrust(approvalIdentity)`. Actions from output produced before a revocation, a reapproval or a file change are disabled.
 
 The trust check lives in `TrayWisp.Runtime`, and the CLI and desktop hosts launch plugins only through Runtime. If an override is ever added, for example a one-off CLI run of an unapproved plugin, it must be an explicit per-invocation user action and be recorded in diagnostics. Disabling or revoking a plugin cancels its in-flight runs.
 

@@ -7,7 +7,7 @@ This roadmap is **tentative**. Scope and order beyond the current phase may chan
 | 0 | Project foundation | **Complete** |
 | 1 | Plugin models, discovery and metadata | **Complete** |
 | 2 | SwiftBar/xbar-compatible text output parser | **Complete** |
-| 3 | Plugin trust and approval | Planned |
+| 3 | Plugin trust and approval | **Complete** |
 | 4 | Script execution engine | Planned |
 | 5 | Scheduling and hot reload | Planned |
 | 6 | CLI and plugin diagnostics | Planned |
@@ -55,11 +55,20 @@ Specified in [output-protocol.md](output-protocol.md).
 
 Not in Phase 2: execution of actions, rendering, rotation of titles, image decoding, ANSI/Markdown/emoji rendering, streaming, the JSON protocol and CLI commands.
 
-## Phase 3: Plugin trust and approval
+## Phase 3: Plugin trust and approval (complete)
 
-- An approval store bound to the normalized plugin root, the plugin's identity (its root-relative path, see [plugin-format.md](plugin-format.md#identity)) and its SHA-256 content hash. Approval lapses when the file changes. Approval must not be revoked merely because a plugin is missing from an incomplete discovery result.
-- One trust check that every later execution path must use: scheduled runs, manual runs, CLI runs and output-driven actions.
-- The time-of-check/time-of-use limits of this design are documented in [security.md](security.md#explicit-approval).
+Specified in [trust-model.md](trust-model.md).
+
+- Core: immutable trust models (validated SHA-256 fingerprint, approval generation, normalized local plugin root, root + `PluginId` key, inspection, approval identity, approval record), trust statuses, a pure trust policy and diagnostics `TW500`–`TW599`.
+- Runtime: `PluginTrustService` with inspection, explicit approval of a reviewed fingerprint (revalidated and rehashed under the store lock immediately before saving), revocation, and one authoritative trust check, plus a variant that rejects stale approval identities for future output-driven actions.
+- Full-content SHA-256 fingerprinting through a validated handle, with a 16 MiB limit enforced on bytes read, sharing that blocks concurrent writes, cancellation, and structured failures.
+- Conservative path validation: local drives only; no relative, UNC, device-namespace or alternate-data-stream paths; no reparse points, offline entries, hidden or dot-prefixed components, case collisions or case-sensitive ancestors; short-name, `subst` and mapped-drive aliases rejected using final-path verification on opened handles; discovery's own classification and collision rules applied to the targeted path.
+- Persistent invalidation when a check or an approval request observes changed content, never restored automatically. If the invalidation cannot be saved, the observing service instance keeps denying the approval and retries; other instances and restarts do not know about it. Transient failures and incomplete discovery never revoke approvals.
+- Approved decisions return the exact validated file path (on-disk spelling), so execution never rebuilds a path from the case-insensitive identity.
+- A strict, versioned JSON store in `%LOCALAPPDATA%\TrayWisp\trust`, with deterministic output, an inter-process lock file, a store directory held open during each operation, handle checks of the lock and store files (single link, final path), atomic replacement through a flushed same-directory temporary file, and all-or-nothing parsing (no partial trust of malformed stores).
+- Tests for fingerprints, identities, path attacks (junctions, symbolic links, short names, case-sensitive directories), approval workflows, stale identities, persistence, corruption, concurrency, lock bounds and cancellation.
+
+Not in Phase 3: execution, interpreter resolution, scheduling, hot reload, record pruning, CLI commands, approval UI, signing or encryption of the store.
 
 ## Phase 4: Script execution engine
 
@@ -68,13 +77,13 @@ Not in Phase 2: execution of actions, rendering, rotation of titles, image decod
 - Enforces a per-run timeout and bounded stdout/stderr capture, and supports cancellation.
 - Tracks whether stdout capture was complete, and passes `isTruncated: true` to the output parser whenever it was not (byte limit, timeout, cancellation, read failure). Incomplete stdout is never parsed as complete input.
 - Terminates the process tree on a best-effort basis with `Process.Kill(entireProcessTree: true)`, plus an investigation of Windows Job Objects whose outcome is documented (see [security.md](security.md#process-tree-termination)).
-- Re-checks trust immediately before every launch.
+- Re-checks trust with `PluginTrustService.CheckTrust` immediately before every launch, on every execution path, launches exactly the `ValidatedFilePath` returned by that check (never a path rebuilt from the identity or a discovery result), uses one long-lived trust service per store, and associates each run's output with the authorizing approval identity (see [trust-model.md](trust-model.md#integration-obligations-for-later-phases)).
 - Records diagnostics for each run.
 
 ## Phase 5: Scheduling and hot reload
 
 - Interval scheduling with no overlapping runs of the same plugin and a global concurrency limit.
-- Hot reload: plugin files that are added, changed or removed are detected. In-flight runs of changed or removed plugins are cancelled. Changed plugins lose approval until you approve them again.
+- Hot reload: plugin files that are added, changed or removed are detected. In-flight runs of changed or removed plugins are cancelled. Changed plugins lose approval until you approve them again (the trust check already invalidates approvals when it observes a change).
 - A plugin counts as removed only when it is absent from a **complete** discovery result (`PluginDiscoveryResult.IsComplete`). Absence from an incomplete scan, for example while a file is briefly locked, is not removal.
 
 ## Phase 6: CLI and plugin diagnostics

@@ -1,13 +1,13 @@
 # Architecture
 
-This document covers how TrayWisp is structured and the rules that hold it together. Each section says whether it describes something **implemented** or **planned**. As of Phase 2, the project structure, build configuration, dependency enforcement, plugin models, metadata parsing, discovery and the text output parser are implemented. Nothing executes plugins or displays their output yet.
+This document covers how TrayWisp is structured and the rules that hold it together. Each section says whether it describes something **implemented** or **planned**. As of Phase 3, the project structure, build configuration, dependency enforcement, plugin models, metadata parsing, discovery, the text output parser, and plugin trust and approval are implemented. Nothing executes plugins or displays their output yet.
 
 ## Projects
 
 | Project | Target | Output | Purpose |
 | --- | --- | --- | --- |
-| `TrayWisp.Core` | `net10.0` | Class library | Plugin models, file-name and metadata parsing, text output parsing (implemented). No file system, process, network, clock or environment access. |
-| `TrayWisp.Runtime` | `net10.0` | Class library | Plugin discovery (implemented), process execution and scheduling (planned). |
+| `TrayWisp.Core` | `net10.0` | Class library | Plugin models, file-name and metadata parsing, text output parsing, trust models and policy (implemented). No file system, process, network, clock or environment access. |
+| `TrayWisp.Runtime` | `net10.0` | Class library | Plugin discovery, plugin trust and the approval store (implemented); process execution and scheduling (planned). |
 | `TrayWisp.Cli` | `net10.0` | `traywisp.exe` | Command-line interface. Implemented: `--help`, `--version`. |
 | `TrayWisp.Desktop` | `net10.0-windows` (WPF) | `TrayWisp.Desktop.exe` | Desktop host. Implemented: an informational window. Planned: system tray, plugin management interface, customizable status bar. |
 | `TrayWisp.Core.Tests` | `net10.0` | xUnit v3 test app | Tests for Core. |
@@ -33,7 +33,7 @@ Enforcement:
 
 1. **Build time.** [`Directory.Build.targets`](../Directory.Build.targets) defines the allowed project references for each production project. Any other `ProjectReference` fails the build with error `TW0001`. To change the architecture, edit that file and this document in the same change.
 2. **Compiled assemblies.** `DependencyRulesTests` in each test project inspects the compiled assembly's references. It catches references added by other means, such as a direct `Reference` to a built DLL.
-3. **Core isolation.** `CoreIsolationTests` reads the metadata of `TrayWisp.Core.dll` and fails if Core references file system types (`File`, `Directory`, `FileStream`, `Path`, …), process types, `Stopwatch`, `TimeProvider`, timers, `DateTime.Now`/`UtcNow`, `Environment.TickCount`, environment variable and folder lookups (`GetEnvironmentVariable`, `ExpandEnvironmentVariables`, `GetFolderPath`, `CurrentDirectory`), network types (`HttpClient`, `Dns`, `Socket`, `WebRequest`, `WebClient`), `System.Drawing.Color`, XML readers or `Regex`.
+3. **Core isolation.** `CoreIsolationTests` reads the metadata of `TrayWisp.Core.dll` and fails if Core references file system types (`File`, `Directory`, `FileStream`, `Path`, …), process types, `Stopwatch`, `TimeProvider`, timers, `DateTime.Now`/`UtcNow`, `Environment.TickCount`, environment variable and folder lookups (`GetEnvironmentVariable`, `ExpandEnvironmentVariables`, `GetFolderPath`, `CurrentDirectory`), network types (`HttpClient`, `Dns`, `Socket`, `WebRequest`, `WebClient`), `System.Drawing.Color`, XML readers or `Regex`. For trust, it also rejects `RandomAccess`, `SafeFileHandle`, `Marshal`, the SHA-256 and incremental hashing types (hashing file content belongs to Runtime) and `Guid.NewGuid` (approval generations are created in Runtime).
 
 If the CLI later needs to talk to a running desktop instance, the CLI will not reference the desktop project. Any such interaction would go through a protocol defined in Core and implemented by both sides (not designed yet).
 
@@ -90,7 +90,7 @@ Design choices:
 - Parsers never throw on malformed input. They return diagnostics. Exceptions are reserved for caller errors (for example a relative plugin root) and cancellation.
 - Core receives bytes, never paths. Runtime alone touches the file system, which keeps the parsers fully unit-testable.
 - No dependency injection, no interfaces without a second implementation, and no new packages.
-- A discovered plugin is neither trusted nor runnable. Approval (Phase 3) and execution (Phase 4) will build on `PluginId` and `PluginDescriptor`.
+- A discovered plugin is neither trusted nor runnable. Approval (Phase 3) builds on `PluginId`. Execution (Phase 4) will build on `PluginDescriptor` and the trust check.
 
 ## Output parsing (implemented)
 
@@ -130,6 +130,38 @@ Design choices:
 - A successful parse is not authorization. It never permits running a command, opening a URL or refreshing a plugin.
 - Executing actions is out of scope. Phases 3, 4 and 7 must route every action through the trust check and the execution safeguards.
 
+## Plugin trust and approval (implemented)
+
+The model, storage format, validation rules and limitations are specified in [trust-model.md](trust-model.md). In short:
+
+```text
+Runtime: PluginTrustService(storePath)            one store file, shared by instances and processes;
+  │                                                only state: bounded, deny-only unsaved invalidations
+  ├─ root + PluginId syntax → PluginTrustKey       (Core: PluginRoot, PluginTrustKey; no file system access)
+  ├─ ApprovalStore: store directory validated and held open, lock file (exclusive, bounded wait,
+  │    single-link regular file at its final path) → strict JSON read (all or nothing)
+  ├─ PendingInvalidations: deny (and retry removing) approvals this instance could not invalidate on disk
+  ├─ PluginFileInspector: drive type, ancestors (no reparse, not remote, not case-sensitive),
+  │    root and each path component opened without following links and held open,
+  │    discovery's ListDirectory/Classify for collisions, final path via GetFinalPathNameByHandle,
+  │    SHA-256 of the whole file (≤ 16 MiB), post-read re-checks and re-listing → validated final path
+  ├─ Core: PluginTrustPolicy.Evaluate / EvaluateApproval → status, invalidate?, approval action
+  └─ ApprovalStore: temporary file in the same directory, flush, held directory re-checked,
+       MoveFileEx (replace, write-through)
+→ PluginTrustDecision | PluginInspectionResult | PluginApprovalResult | PluginRevocationResult (TW500–TW599)
+```
+
+Core types live in `TrayWisp.Core.Trust`: `ContentFingerprint`, `ApprovalGeneration`, `PluginRoot`, `PluginTrustKey`, `PluginFingerprint`, `PluginApprovalIdentity`, `PluginApproval`, `PluginTrustStatus`, `PluginTrustPolicy` (with `PluginTrustEvaluation` and `PluginApprovalAction`), and `TrustDiagnostic`/`TrustDiagnosticCode`. Runtime types live in `TrayWisp.Runtime.Trust`: `PluginTrustService`, `PluginTrustOptions` and the four result types and their status enums. Everything else (`ApprovalStore`, `StoreLock`, `ApprovalStoreSerializer`, `PendingInvalidations`, `PluginFileInspector`, `TrustPaths`, `WindowsFileApi`) is internal. An approved `PluginTrustDecision` carries `ValidatedFilePath`, the exact file the check hashed; it is produced only by Runtime from the open file handle, never from caller input.
+
+Design choices:
+
+- Core holds immutable values and pure decisions. Runtime holds every file system access, hashing, the clock (`TimeProvider`), GUID creation and the store.
+- Result types have internal constructors, so only Runtime can produce an approved decision. There is a single authoritative check and no bypass.
+- Every operation that reads or changes approvals holds the store lock for its whole duration and reads the store from disk. There is no cache of approvals. The only state in a service instance is its set of unsaved invalidations, which can only deny; hosts therefore keep one long-lived instance per store (see [trust-model.md](trust-model.md#unsaved-invalidations)).
+- Discovery's own listing and classification helpers are reused (made `internal`), so a targeted trust check applies the same exclusion and collision rules as a full scan, without rescanning unrelated plugins.
+- Windows-specific APIs are confined to `WindowsFileApi`: five `kernel32` functions through `LibraryImport`, which is why `TrayWisp.Runtime` sets `AllowUnsafeBlocks`. Callers are annotated `[SupportedOSPlatform("windows")]`, and on other platforms every trust operation fails with `TW501`.
+- `System.Text.Json` (in the shared framework) is the only serializer. No packages were added.
+
 ## Planned component responsibilities
 
 Nothing in this section is implemented. It records the intended direction so that early decisions stay consistent with it. Phase numbers refer to [roadmap.md](roadmap.md).
@@ -139,7 +171,7 @@ Nothing in this section is implemented. It records the intended direction so tha
 - Pure functions only. No file system, process or clock access, so behaviour is fully unit-testable.
 
 **Runtime**
-- An approval store, and a single trust check that every execution path uses (Phase 3).
+- Calling the Phase 3 trust check immediately before every launch and every output-driven action (Phases 4 and 7).
 - Interpreter resolution by file extension (for example PowerShell for `.ps1`, Python for `.py`), resolved to absolute paths. Only interpreters already installed on the machine are used. Bash and batch execution is deferred (Phase 4).
 - Process execution (Phase 4):
   - The interpreter is launched directly with explicit arguments, never by evaluating a shell command string.
