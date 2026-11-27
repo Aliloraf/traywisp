@@ -1,12 +1,12 @@
 # Architecture
 
-This document covers how TrayWisp is structured and the rules that hold it together. Each section says whether it describes something **implemented** or **planned**. As of Phase 1, the project structure, build configuration, dependency enforcement, and plugin models, metadata parsing and discovery are implemented. Nothing executes plugins yet.
+This document covers how TrayWisp is structured and the rules that hold it together. Each section says whether it describes something **implemented** or **planned**. As of Phase 2, the project structure, build configuration, dependency enforcement, plugin models, metadata parsing, discovery and the text output parser are implemented. Nothing executes plugins or displays their output yet.
 
 ## Projects
 
 | Project | Target | Output | Purpose |
 | --- | --- | --- | --- |
-| `TrayWisp.Core` | `net10.0` | Class library | Plugin models, file-name and metadata parsing (implemented), output protocol parsing (planned). No file system, process or clock access. |
+| `TrayWisp.Core` | `net10.0` | Class library | Plugin models, file-name and metadata parsing, text output parsing (implemented). No file system, process, network, clock or environment access. |
 | `TrayWisp.Runtime` | `net10.0` | Class library | Plugin discovery (implemented), process execution and scheduling (planned). |
 | `TrayWisp.Cli` | `net10.0` | `traywisp.exe` | Command-line interface. Implemented: `--help`, `--version`. |
 | `TrayWisp.Desktop` | `net10.0-windows` (WPF) | `TrayWisp.Desktop.exe` | Desktop host. Implemented: an informational window. Planned: system tray, plugin management interface, customizable status bar. |
@@ -33,7 +33,7 @@ Enforcement:
 
 1. **Build time.** [`Directory.Build.targets`](../Directory.Build.targets) defines the allowed project references for each production project. Any other `ProjectReference` fails the build with error `TW0001`. To change the architecture, edit that file and this document in the same change.
 2. **Compiled assemblies.** `DependencyRulesTests` in each test project inspects the compiled assembly's references. It catches references added by other means, such as a direct `Reference` to a built DLL.
-3. **Core isolation.** `CoreIsolationTests` reads the metadata of `TrayWisp.Core.dll` and fails if Core references file system types (`File`, `Directory`, `FileStream`, `Path`, …), process types, `Stopwatch`, `TimeProvider`, timers, `DateTime.Now`/`UtcNow`, `Environment.TickCount`, `HttpClient`, XML readers or `Regex`.
+3. **Core isolation.** `CoreIsolationTests` reads the metadata of `TrayWisp.Core.dll` and fails if Core references file system types (`File`, `Directory`, `FileStream`, `Path`, …), process types, `Stopwatch`, `TimeProvider`, timers, `DateTime.Now`/`UtcNow`, `Environment.TickCount`, environment variable and folder lookups (`GetEnvironmentVariable`, `ExpandEnvironmentVariables`, `GetFolderPath`, `CurrentDirectory`), network types (`HttpClient`, `Dns`, `Socket`, `WebRequest`, `WebClient`), `System.Drawing.Color`, XML readers or `Regex`.
 
 If the CLI later needs to talk to a running desktop instance, the CLI will not reference the desktop project. Any such interaction would go through a protocol defined in Core and implemented by both sides (not designed yet).
 
@@ -92,12 +92,49 @@ Design choices:
 - No dependency injection, no interfaces without a second implementation, and no new packages.
 - A discovered plugin is neither trusted nor runnable. Approval (Phase 3) and execution (Phase 4) will build on `PluginId` and `PluginDescriptor`.
 
+## Output parsing (implemented)
+
+The text format, limits and recovery rules are specified in [output-protocol.md](output-protocol.md). In short:
+
+```text
+Core: PluginOutputParser.Parse(decoded stdout, isTruncated)
+  ├─ rejects truncated input (TW405), over-long input and too many lines before parsing (fails: no partial output)
+  ├─ one pass over LF-separated lines, no regular expressions, no input-wide splitting
+  ├─ fails on any over-long physical line (TW410) and on a ~~~ streaming delimiter (TW416)
+  ├─ header titles until the first ---, then menu items and separators
+  ├─ submenus from -- prefixes, using a stack of open items; orphans and depth jumps are dropped
+  ├─ per line: label (first unescaped |), then name=value parameters with "…"/'…' quoting
+  ├─ typed formatting (colour, font, size, length, trim, tooltip, dropdown, disabled, checked)
+  └─ inert actions: RefreshAction | UrlAction (http/https) | CommandAction (executable + argument list)
+→ PluginOutputParseResult(Status, PluginOutput(Titles, Items), Diagnostics TW400–TW499)
+```
+
+Types live in `TrayWisp.Core.Output`:
+
+| Type | Role |
+| --- | --- |
+| `PluginOutputParser` | The parser and its limits. Never throws for any input. |
+| `PluginOutputParseResult`, `OutputParseStatus` | Complete, or Failed with `PluginOutput.Empty` when a global limit is exceeded (including the line-length limit), the caller reports truncated input, or the output uses unsupported streaming. Diagnostics are in detection order, which is not strictly line order. |
+| `PluginOutput`, `OutputTitle`, `MenuNode`, `MenuItem`, `MenuSeparator` | Immutable title list and menu tree. A title wraps a `MenuItem` without children, plus its `dropdown` preference. |
+| `TextFormat`, `TextColor`, `OutputColor` | Formatting preferences with platform-independent RGB colours. |
+| `OutputAction`, `RefreshAction`, `UrlAction`, `CommandAction` | Untrusted action requests. |
+| `OutputDiagnostic`, `OutputDiagnosticCode` | Diagnostics with line and column, separate from `PluginDiagnostic`, reusing `PluginDiagnosticSeverity` and `PluginDiagnosticText`. |
+
+Design choices:
+
+- Constructors of the model types are internal, so invalid combinations cannot be built: an action on a disabled item or an item with a submenu, a title with children, or a failed result with output.
+- Any action problem (malformed syntax, duplicate, conflict, unknown or unsupported behavioural parameter, invalid value) suppresses the whole action. The parser never picks a winner or produces a partial action.
+- Global problems fail the whole parse, while problems in single lines and parameters are recovered from: the line is dropped, its parameters are ignored or its action is suppressed, and the rest of the menu is kept.
+- Phase 4 will cap captured stdout bytes and decode them. The parser only sees decoded text and applies its own character-based limits. The parser cannot detect a cut, because a cut value can still be valid (`param1=document.txt` cut to `param1=doc`), and it never infers truncation from a missing final line feed. Phase 4 must therefore pass `isTruncated: true` whenever capture was incomplete (byte limit, timeout, cancellation, read failure), and must never pass incomplete stdout as complete input.
+- Invisible-label detection (white space, format characters, default-ignorable code points, U+2800) is best effort. It cannot guarantee that every font renders every accepted label visibly.
+- A successful parse is not authorization. It never permits running a command, opening a URL or refreshing a plugin.
+- Executing actions is out of scope. Phases 3, 4 and 7 must route every action through the trust check and the execution safeguards.
+
 ## Planned component responsibilities
 
 Nothing in this section is implemented. It records the intended direction so that early decisions stay consistent with it. Phase numbers refer to [roadmap.md](roadmap.md).
 
 **Core**
-- A parser for SwiftBar/xbar-compatible text output, turning it into a structured menu model. Action parameters are parsed into data, not executed (Phase 2).
 - A versioned JSON output schema and parser (Phase 10).
 - Pure functions only. No file system, process or clock access, so behaviour is fully unit-testable.
 

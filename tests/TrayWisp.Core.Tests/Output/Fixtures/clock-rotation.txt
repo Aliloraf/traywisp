@@ -1,0 +1,14 @@
+14:05 | font="Cascadia Mono" size=13
+Thu 26 Nov | dropdown=false
+🕑 UTC 13:05 | color=gray,silver
+---
+Thursday, 26 November 2026 | disabled=true
+Week 48 · Day 331 | checked=true
+---
+Time zones
+--Tokyo 22:05 | font="Cascadia Mono"
+--New York 08:05 | font="Cascadia Mono"
+--São Paulo 10:05 | font="Cascadia Mono"
+-----
+--Open world clock | href=https://time.example/world
+Refresh | refresh=true

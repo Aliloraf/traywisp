@@ -1,0 +1,12 @@
+🔔 3 | color=#F78166,#FFA198
+---
+Notifications | href=https://github.com/notifications
+---
+octo-org/widget
+--Review requested: Add dark mode \| theming | href=https://github.com/octo-org/widget/pull/42 length=40 tooltip="Add dark mode | theming"
+--CI failed on main | color=red href=https://github.com/octo-org/widget/actions/runs/123456
+octo-org/docs
+--Mentioned in "Release notes 2.0" | href='https://github.com/octo-org/docs/issues/7'
+---
+Mark all as read | shell="C:\Program Files\GitHub CLI\gh.exe" param0=api param1=--method param2=PUT param3=/notifications refresh=true terminal=false
+Last checked 14:05 | disabled=true size=11

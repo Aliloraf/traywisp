@@ -1,0 +1,22 @@
+CPU 23% | color=#2E8B57
+RAM 61% | color=orange
+---
+CPU
+--Usage 23% | color=green
+--Temperature 54 °C
+--Top processes
+----pwsh.exe 7.1% | tooltip="C:\Program Files\PowerShell\7\pwsh.exe"
+----msedge.exe 4.3%
+Memory
+--Used 9.8 GB of 16 GB
+--Committed 12.1 GB of 18.4 GB | length=20
+Disks
+--C:\ 71% used | color=orange
+--D:\ 12% used
+-----
+--Open Disk Management | shell=diskmgmt.msc terminal=false
+---
+Task Manager | shell=taskmgr.exe terminal=false
+Resource Monitor | shell="C:\Windows\System32\perfmon.exe" param1=/res
+Open log folder | shell="C:\Windows\explorer.exe" param1="C:\Users\Public\Documents\Monitor Logs\"
+Refresh now | refresh=true
