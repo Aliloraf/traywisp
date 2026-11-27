@@ -28,7 +28,8 @@ Examples of issues that **are** in scope:
 - TrayWisp adding shell interpretation of its own to plugin launches or actions, or plugin output, file names or arguments otherwise causing code execution beyond what the plugin itself can do.
 - The trust check approving content you did not explicitly approve, trusting part of a malformed approval store, restoring an approval after an observed content change, or accepting a stale approval identity, beyond the limitations documented in [docs/trust-model.md](docs/trust-model.md#security-guarantees-and-limitations).
 - Plugin discovery executing, modifying or following links to files, or being driven into unbounded memory or time by plugin files or metadata, beyond the limitations documented in [docs/plugin-format.md](docs/plugin-format.md#security-limitations).
-- Timeouts, output limits, cancellation or process-tree termination failing in ways not covered by their documented limitations.
+- Interpreter resolution using a plugin-controlled, relative, current-directory or otherwise unsafe executable, or plugin input changing the interpreter's arguments or environment, beyond the limitations documented in [docs/execution-engine.md](docs/execution-engine.md).
+- Timeouts, output limits, cancellation or process-tree termination failing in ways not covered by their documented limitations, or incomplete, undecodable or unsuccessful output being published.
 - Diagnostics or logs exposing data beyond what is documented.
 
-See [docs/security.md](docs/security.md) for the trust model and the planned safeguards.
+See [docs/security.md](docs/security.md) for the trust model and the implemented and planned safeguards, and [docs/execution-engine.md](docs/execution-engine.md) for plugin execution.

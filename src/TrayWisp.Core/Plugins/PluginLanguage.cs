@@ -20,13 +20,16 @@ public enum PluginLanguage
 }
 
 /// <summary>
-/// Whether TrayWisp intends to run plugins of a language. No language is executable yet:
-/// execution arrives in a later phase.
+/// Whether TrayWisp can run plugins of a language. Support for a language does not mean that its interpreter is
+/// installed: interpreter availability is determined separately, for each run (see docs/execution-engine.md).
 /// </summary>
 public enum PluginExecutionSupport
 {
-    /// <summary>A candidate for the planned native interpreter integration (PowerShell, Python, JavaScript).</summary>
-    Planned,
+    /// <summary>
+    /// Execution is implemented (PowerShell, Python, JavaScript). Discovery is unaffected, and a plugin still runs
+    /// only after explicit approval and when an interpreter is available.
+    /// </summary>
+    Supported,
 
     /// <summary>Recognized during discovery, but execution support is deferred with no committed design (Bash, batch).</summary>
     Deferred,
@@ -61,10 +64,10 @@ public static class PluginLanguages
         return known;
     }
 
-    /// <summary>Returns whether execution of <paramref name="language"/> is planned or deferred.</summary>
+    /// <summary>Returns whether execution of <paramref name="language"/> is supported or deferred.</summary>
     public static PluginExecutionSupport GetExecutionSupport(PluginLanguage language) => language switch
     {
-        PluginLanguage.PowerShell or PluginLanguage.Python or PluginLanguage.JavaScript => PluginExecutionSupport.Planned,
+        PluginLanguage.PowerShell or PluginLanguage.Python or PluginLanguage.JavaScript => PluginExecutionSupport.Supported,
         PluginLanguage.Bash or PluginLanguage.Batch => PluginExecutionSupport.Deferred,
         _ => throw new ArgumentOutOfRangeException(nameof(language), language, "Unknown plugin language."),
     };

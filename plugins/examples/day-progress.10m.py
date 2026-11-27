@@ -2,7 +2,7 @@
 # <xbar.title>Day progress</xbar.title>
 # <xbar.version>v1.0</xbar.version>
 # <xbar.author>TrayWisp contributors</xbar.author>
-# <xbar.desc>Shows how much of the day has passed. Example plugin; TrayWisp cannot run plugins yet.</xbar.desc>
+# <xbar.desc>Shows how much of the day has passed. Example plugin.</xbar.desc>
 # <xbar.dependencies>python3</xbar.dependencies>
 #
 # Uses xbar-style metadata tags, which TrayWisp also reads.

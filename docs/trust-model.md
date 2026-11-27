@@ -2,7 +2,7 @@
 
 This document specifies plugin trust and approval: how TrayWisp identifies a plugin for approval, fingerprints its content, records explicit approvals, invalidates them, and decides whether a plugin may run.
 
-**Status (Phase 3).** Everything in this document is **implemented and tested**, except where a section says *planned*. TrayWisp still **cannot run plugins**. Nothing calls the trust check yet. Phase 4 (execution) and later phases must use it as described in [Integration obligations](#integration-obligations-for-later-phases).
+**Status (Phase 3, used by Phase 4).** Everything in this document is **implemented and tested**, except where a section says *planned*. The execution engine ([execution-engine.md](execution-engine.md)) calls the authoritative check immediately before every launch. Later phases must use it as described in [Integration obligations](#integration-obligations-for-later-phases).
 
 **Approval is consent, not sandboxing.** An approved plugin runs with all of your user account's access. Approval only records that you chose to trust exactly this content at this location. See [security.md](security.md#trust-model).
 
@@ -81,7 +81,14 @@ It matters in case-sensitive directories inside the root. There, the case-insens
 - It is set only when the status is `Approved`, together with `Approval`. Every failed or denied decision has neither, so a denial never carries a launchable path.
 - `PluginInspectionResult.ValidatedFilePath` reports the same for a successful inspection. An inspection authorizes nothing: that path is for display, never for launching.
 - Approval identity and equality are unchanged (case-insensitive root and identity, fingerprint, generation), and the store keeps keying records by normalized root, `PluginId`, fingerprint and generation. The path is not stored.
-- The file is no longer held once the result is returned. The validated path does **not** close the window between the check and the moment an interpreter opens the file (see [Limitations](#security-guarantees-and-limitations)).
+- The file is no longer held once a public `CheckTrust` result is returned. The validated path alone does **not** close the window between the check and the moment an interpreter opens the file (see [Limitations](#security-guarantees-and-limitations)).
+- For launches, the internal `CheckTrustForExecution` performs exactly the same check and, only when it approves, keeps the inspected file and its directories open in an internal lease for the whole run (see [Execution lease](#execution-lease)).
+
+### Execution lease
+
+*Implemented in Phase 4.* `PluginTrustService.CheckTrustForExecution(root, id)` is internal to Runtime and used only by the execution engine. It runs the same `CheckCore` as `CheckTrust(root, id)`, with the same store lock, store read, unsaved-invalidation handling, inspection, policy and invalidation. Only for an `Approved` decision, the open inspection (the plugin file, opened for reading with read-only sharing, and the root and each directory inside it on the path, opened without delete sharing) is transferred to a `PluginExecutionLease` instead of being closed. Every other outcome closes it as before. The store lock is released before the method returns.
+
+The lease exposes the decision, its approval identity and its validated path. The engine disposes it when the run ends, on every path. While it is held, the plugin file cannot be written, replaced, renamed or deleted, and the directories cannot be renamed or deleted; it can still be read, and other trust operations proceed. It does not cover memory-mapped writers, imported modules, the interpreter or ancestors of the root. Public APIs and their semantics are unchanged. See [execution-engine.md](execution-engine.md#authorization-lease).
 
 ## Approval identity
 
@@ -173,7 +180,7 @@ What it does **not** achieve:
 - Ancestors of the root are checked, then closed. An ancestor swapped for a junction after its check is caught by the final-path checks, as long as the swap happens before the last of them.
 - The listing is path-based. .NET cannot list a directory through a held handle. Because the directory is held open and cannot be renamed, the path still names the same directory unless an ancestor of the root is swapped.
 - A process that mapped the file into memory for writing before the inspection can still change it. Sharing modes do not cover existing mapped views.
-- Nothing holds the file after the operation returns. **Every result describes one moment.** The interpreter that Phase 4 starts opens the file by path on its own, later (see [Limitations](#security-guarantees-and-limitations)).
+- Nothing holds the file after a public operation returns. **Every result describes one moment.** The execution engine keeps the file held through its internal lease while the interpreter runs; the interpreter still opens the file by path on its own (see [Limitations](#security-guarantees-and-limitations)).
 
 ## Fingerprinting
 
@@ -240,7 +247,7 @@ It is bounded by `MaxApprovals` (4,096). Because generations the store no longer
 
 **Incomplete discovery.** Trust operations never consult discovery results. A plugin missing from an incomplete (or complete) discovery result keeps its approval. Phase 3 has no automatic pruning of records. Removal reconciliation and hot reload belong to Phase 5.
 
-**Observed versus unobserved changes.** Only changes that a check observes invalidate an approval. If a file is changed and changed back between two checks, no check sees the difference, and the approval stands, because the bytes are again the approved bytes. Phase 4 must check immediately before every launch to keep this window small.
+**Observed versus unobserved changes.** Only changes that a check observes invalidate an approval. If a file is changed and changed back between two checks, no check sees the difference, and the approval stands, because the bytes are again the approved bytes. The execution engine checks immediately before every launch to keep this window small.
 
 **Revocation.** `Revoke(root, id)` removes the approval (`Revoked`) or reports `NotApproved`. It validates only the syntax of the root and identity, so approvals of plugins or roots that no longer exist can be revoked. A later approval gets a new generation, even for the same bytes.
 
@@ -248,7 +255,7 @@ It is bounded by `MaxApprovals` (4,096). Because generations the store no longer
 
 Phase 2 parses command, URL and refresh requests into inert data. A future output-driven action must not be authorized just because the producing plugin's current file is approved: the output may predate a revocation, a reapproval or a content change.
 
-- A successful `CheckTrust` returns `Approval`, a `PluginApprovalIdentity` (key, fingerprint, generation). Phase 4 must associate the output of a run with the identity that authorized that run.
+- A successful `CheckTrust` returns `Approval`, a `PluginApprovalIdentity` (key, fingerprint, generation). The execution engine associates the output of a run with the identity that authorized that run (`PluginExecutionResult.Approval`).
 - `CheckTrust(expectedApprovalIdentity)` performs the full check and additionally requires that the current approval is exactly that identity. Otherwise the result is `StaleApproval`, or `ContentChanged` (with invalidation) if the file changed.
 - Revocation followed by reapproval of the **same bytes** creates a new generation, so output produced before the revocation stays stale. An idempotent approval of unchanged content keeps the generation, because it is the same approval, except for an approval the instance has already invalidated without saving that: it gets a new generation.
 - An identity is not a capability. Constructing one, for example with the current fingerprint and a guessed generation, grants nothing. It is only compared with the persisted approval.
@@ -403,7 +410,7 @@ What Phase 3 guarantees, within the limits below:
 
 What it does not guarantee:
 
-- **Time of check to time of use (TOCTOU).** A decision describes one moment. Phase 4's interpreter will open the script by path, after the check, without TrayWisp's handles. Anything that can write to the plugin file or the directories on its path in between can change what runs. Re-checking immediately before each launch narrows the window but does not close it. `ValidatedFilePath` makes sure the path names the file that was checked; it does not make that file stay the same. Read an approval as "this content was trusted when it was checked".
+- **Time of check to time of use (TOCTOU).** A decision describes one moment. The interpreter opens the script by path, after the check. The execution engine re-checks immediately before each launch and keeps the checked file and its directories held for the whole run, so ordinary writes, replacement, renaming and deletion are refused meanwhile. This narrows the window but does not close it: memory-mapped writers, imported modules, the interpreter itself and ancestors of the root are not covered, and a change after the run ends is seen only by the next check. Read an approval as "this content was trusted when it was checked" (see [execution-engine.md](execution-engine.md#remaining-time-of-check-to-time-of-use-windows)).
 - **Unsaved invalidations.** Known only to the service instance that observed them. Other instances, other processes and later sessions see only the persisted store, and approve the old generation if its bytes have been restored before the removal could be saved.
 - **Same-user modification.** The store is an ordinary file in your profile. Any program running as you, including an approved plugin, can edit or replace it, approve anything, or remove approvals. The store is not signed, encrypted or protected with DPAPI. Approval protects against unnoticed changes to plugins, not against malware already running as you.
 - **Store replacement.** The store directory is validated and then held open for the transaction, so it cannot be deleted or renamed meanwhile, and the lock, store and temporary files are checked through their handles. Its ancestors are only checked, not held. Whether NTFS refuses to rename an ancestor of a directory with open handles is not relied upon. An ancestor swapped during the transaction is detected by the final-path check before publication, but between that check and the path-based rename there remains a short window in which a same-user process could redirect the rename. This is not resistance against same-user malicious processes, which can edit the store directly anyway.
@@ -422,9 +429,9 @@ Windows-specific behaviour is tested against real temporary directories and isol
 
 ## Integration obligations for later phases
 
-*Planned, not implemented.* Later phases must:
+Phase 4 implemented the first obligation below (see [execution-engine.md](execution-engine.md#authorization)); the others are *planned, not implemented*. Later phases must:
 
-- **Phase 4 (execution).** Call `CheckTrust` immediately before every launch, on every path: scheduled, manual, CLI and output-driven. Launch only when it returns `Approved`, and launch **exactly the `ValidatedFilePath` of that immediate check**. Never reconstruct a launch path from the root and the case-insensitive identity, from an approval identity, or from an earlier discovery descriptor or decision. Use one long-lived `PluginTrustService` per store for all authoritative checks, so that [unsaved invalidations](#unsaved-invalidations) keep being enforced and retried. Never cache a decision, never treat a fingerprint, a discovery result or an earlier decision as authorization, and add no bypass. If a one-off override is ever added, it must be an explicit per-invocation user action recorded in diagnostics (see [security.md](security.md#trust-checks-on-every-execution-path)). Associate each run's output with the decision's `Approval` identity. Narrow the TOCTOU window further where practical, and document what remains.
+- **Phase 4 (execution), implemented.** Call `CheckTrust` immediately before every launch, on every path: scheduled, manual, CLI and output-driven. Launch only when it returns `Approved`, and launch **exactly the `ValidatedFilePath` of that immediate check**. Never reconstruct a launch path from the root and the case-insensitive identity, from an approval identity, or from an earlier discovery descriptor or decision. Use one long-lived `PluginTrustService` per store for all authoritative checks, so that [unsaved invalidations](#unsaved-invalidations) keep being enforced and retried. Never cache a decision, never treat a fingerprint, a discovery result or an earlier decision as authorization, and add no bypass. If a one-off override is ever added, it must be an explicit per-invocation user action recorded in diagnostics (see [security.md](security.md#trust-checks-on-every-execution-path)). Associate each run's output with the decision's `Approval` identity. Narrow the TOCTOU window further where practical, and document what remains. Hosts satisfy this by running plugins only through `PluginExecutionService.RunAsync`.
 - **Phase 4/7 (output-driven actions).** When an action is activated, call `CheckTrust(approvalIdentity)` with the identity of the run that produced the output, and act only on `Approved`. A `StaleApproval` disables the action.
 - **Phase 5 (scheduling and hot reload).** Cancel in-flight runs when a check denies a plugin. Never revoke or prune an approval because a plugin is missing from an incomplete discovery result. Any reconciliation of records for removed plugins must use complete results only and must be designed explicitly.
 - **Phases 6 and 8 (CLI and UI).** Present `Inspect` results for review, preferably with the content itself, and pass the reviewed fingerprint to `Approve`. Show diagnostics escaped. Explain that approval is consent, not sandboxing.

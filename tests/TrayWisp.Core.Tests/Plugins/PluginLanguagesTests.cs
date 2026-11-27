@@ -6,11 +6,11 @@ namespace TrayWisp.Core.Tests.Plugins;
 public sealed class PluginLanguagesTests
 {
     [Theory]
-    [InlineData("ps1", PluginLanguage.PowerShell, PluginExecutionSupport.Planned)]
-    [InlineData(".PS1", PluginLanguage.PowerShell, PluginExecutionSupport.Planned)]
-    [InlineData("py", PluginLanguage.Python, PluginExecutionSupport.Planned)]
-    [InlineData("Py", PluginLanguage.Python, PluginExecutionSupport.Planned)]
-    [InlineData("js", PluginLanguage.JavaScript, PluginExecutionSupport.Planned)]
+    [InlineData("ps1", PluginLanguage.PowerShell, PluginExecutionSupport.Supported)]
+    [InlineData(".PS1", PluginLanguage.PowerShell, PluginExecutionSupport.Supported)]
+    [InlineData("py", PluginLanguage.Python, PluginExecutionSupport.Supported)]
+    [InlineData("Py", PluginLanguage.Python, PluginExecutionSupport.Supported)]
+    [InlineData("js", PluginLanguage.JavaScript, PluginExecutionSupport.Supported)]
     [InlineData("sh", PluginLanguage.Bash, PluginExecutionSupport.Deferred)]
     [InlineData("bat", PluginLanguage.Batch, PluginExecutionSupport.Deferred)]
     [InlineData(".CMD", PluginLanguage.Batch, PluginExecutionSupport.Deferred)]
