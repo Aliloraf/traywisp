@@ -1,12 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Platform-independent plugin execution and scheduling. May reference TrayWisp.Core only. -->
+  <!-- Platform-independent plugin discovery, execution and scheduling. May reference TrayWisp.Core only. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\TrayWisp.Core\TrayWisp.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="TrayWisp.Runtime.Tests" />
   </ItemGroup>
 
 </Project>

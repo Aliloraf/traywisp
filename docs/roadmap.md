@@ -5,7 +5,7 @@ This roadmap is **tentative**. Scope and order beyond the current phase may chan
 | Phase | Theme | Status |
 | --- | --- | --- |
 | 0 | Project foundation | **Complete** |
-| 1 | Plugin models, discovery and metadata | Planned |
+| 1 | Plugin models, discovery and metadata | **Complete** |
 | 2 | SwiftBar/xbar-compatible text output parser | Planned |
 | 3 | Plugin trust and approval | Planned |
 | 4 | Script execution engine | Planned |
@@ -26,13 +26,19 @@ This roadmap is **tentative**. Scope and order beyond the current phase may chan
 - Windows CI for restore, build and test.
 - Documentation of the architecture, security model and platform constraints.
 
-## Phase 1: Plugin models, discovery and metadata
+## Phase 1: Plugin models, discovery and metadata (complete)
 
-- Core: plugin identity and metadata models, including the refresh interval parsed from the file name (`name.interval.ext`).
-- Core: parsing of metadata that plugin authors embed in plugin files. The supported conventions are decided during the phase.
-- Runtime: discovery of candidate plugin files in a plugin directory, and classification by file extension.
-- Discovery only reads files. It never executes a plugin.
-- Unit tests for metadata edge cases, and discovery tests against temporary directories.
+Specified in [plugin-format.md](plugin-format.md).
+
+- Core: immutable models for plugin identity (root-relative path, case-insensitive), file name, refresh interval, language, metadata, descriptor and structured diagnostics.
+- Core: a culture-independent parser for `name[.interval].extension` with `ms`, `s`, `m`, `h` and `d` units, a 250 ms to 30 day range, and an unambiguous rule for dotted names and malformed intervals. Bare numbers such as `backup.2024` are part of the name.
+- Core: classification of `.ps1`, `.py` and `.js` (execution planned) and `.sh`, `.bat` and `.cmd` (execution deferred). Other files, including executables, are ignored.
+- Core: a bounded, regex-free and XML-free parser for `traywisp`, `swiftbar`, `xbar` and `bitbar` metadata tags in language-specific comments, with namespace precedence, duplicate and conflict diagnostics, UTF-8/UTF-16 BOM handling and size limits. SwiftBar/xbar behavioural directives are reported as unsupported.
+- Runtime: read-only, deterministic, recursive discovery with traversal limits and cancellation. It skips hidden entries, reparse points and remote-storage entries, and re-checks entries immediately before and after listing or reading them. Case-variant names are excluded before anything is read, and a listing truncated by the entry budget contributes nothing. Per-file failures are isolated, and incomplete scans are flagged.
+- Tests for parsing edge cases, encodings and limits, and filesystem tests against temporary directories (junctions, symbolic links, case-sensitive directories, ACL-denied and locked files). A test checks that discovery neither executes nor modifies plugins.
+- Sample plugins in `plugins/examples`.
+
+Not in Phase 1: output parsing, execution, scheduling, file watching, approval storage, interpreter resolution, CLI commands and UI.
 
 ## Phase 2: SwiftBar/xbar-compatible text output parser
 
@@ -42,7 +48,7 @@ This roadmap is **tentative**. Scope and order beyond the current phase may chan
 
 ## Phase 3: Plugin trust and approval
 
-- An approval store bound to the plugin's path and SHA-256 content hash. Approval lapses when the file changes.
+- An approval store bound to the normalized plugin root, the plugin's identity (its root-relative path, see [plugin-format.md](plugin-format.md#identity)) and its SHA-256 content hash. Approval lapses when the file changes. Approval must not be revoked merely because a plugin is missing from an incomplete discovery result.
 - One trust check that every later execution path must use: scheduled runs, manual runs, CLI runs and output-driven actions.
 - The time-of-check/time-of-use limits of this design are documented in [security.md](security.md#explicit-approval).
 
@@ -59,6 +65,7 @@ This roadmap is **tentative**. Scope and order beyond the current phase may chan
 
 - Interval scheduling with no overlapping runs of the same plugin and a global concurrency limit.
 - Hot reload: plugin files that are added, changed or removed are detected. In-flight runs of changed or removed plugins are cancelled. Changed plugins lose approval until you approve them again.
+- A plugin counts as removed only when it is absent from a **complete** discovery result (`PluginDiscoveryResult.IsComplete`). Absence from an incomplete scan, for example while a file is briefly locked, is not removal.
 
 ## Phase 6: CLI and plugin diagnostics
 

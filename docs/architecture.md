@@ -1,13 +1,13 @@
 # Architecture
 
-This document covers how TrayWisp is structured and the rules that hold it together. Each section says whether it describes something **implemented** or **planned**. As of Phase 0, only the project structure, build configuration and dependency enforcement are implemented.
+This document covers how TrayWisp is structured and the rules that hold it together. Each section says whether it describes something **implemented** or **planned**. As of Phase 1, the project structure, build configuration, dependency enforcement, and plugin models, metadata parsing and discovery are implemented. Nothing executes plugins yet.
 
 ## Projects
 
 | Project | Target | Output | Purpose |
 | --- | --- | --- | --- |
-| `TrayWisp.Core` | `net10.0` | Class library | Plugin models, plugin metadata and output protocol parsing (planned). No I/O or process code. |
-| `TrayWisp.Runtime` | `net10.0` | Class library | Plugin discovery, process execution and scheduling (planned). |
+| `TrayWisp.Core` | `net10.0` | Class library | Plugin models, file-name and metadata parsing (implemented), output protocol parsing (planned). No file system, process or clock access. |
+| `TrayWisp.Runtime` | `net10.0` | Class library | Plugin discovery (implemented), process execution and scheduling (planned). |
 | `TrayWisp.Cli` | `net10.0` | `traywisp.exe` | Command-line interface. Implemented: `--help`, `--version`. |
 | `TrayWisp.Desktop` | `net10.0-windows` (WPF) | `TrayWisp.Desktop.exe` | Desktop host. Implemented: an informational window. Planned: system tray, plugin management interface, customizable status bar. |
 | `TrayWisp.Core.Tests` | `net10.0` | xUnit v3 test app | Tests for Core. |
@@ -33,6 +33,7 @@ Enforcement:
 
 1. **Build time.** [`Directory.Build.targets`](../Directory.Build.targets) defines the allowed project references for each production project. Any other `ProjectReference` fails the build with error `TW0001`. To change the architecture, edit that file and this document in the same change.
 2. **Compiled assemblies.** `DependencyRulesTests` in each test project inspects the compiled assembly's references. It catches references added by other means, such as a direct `Reference` to a built DLL.
+3. **Core isolation.** `CoreIsolationTests` reads the metadata of `TrayWisp.Core.dll` and fails if Core references file system types (`File`, `Directory`, `FileStream`, `Path`, …), process types, `Stopwatch`, `TimeProvider`, timers, `DateTime.Now`/`UtcNow`, `Environment.TickCount`, `HttpClient`, XML readers or `Regex`.
 
 If the CLI later needs to talk to a running desktop instance, the CLI will not reference the desktop project. Any such interaction would go through a protocol defined in Core and implemented by both sides (not designed yet).
 
@@ -49,25 +50,65 @@ If the CLI later needs to talk to a running desktop instance, the CLI will not r
 
 The production projects have no third-party package dependencies. New dependencies need a clear justification (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
 
+## Plugin model and discovery (implemented)
+
+The file format and every rule are specified in [plugin-format.md](plugin-format.md). In short:
+
+```text
+Runtime: PluginDiscovery.Discover(root, options, token)
+  ├─ lists directories (sorted, no reparse points, no hidden entries), charging each
+  │  enumerated entry to one global MaxEntries budget, with a one-entry look-ahead
+  ├─ withholds every entry of a listing truncated by the budget (collisions unknowable)
+  ├─ Core: PluginFileNameParser.Parse(fileName)        → PluginFileName | rejection | not a candidate
+  ├─ excludes case-variant names (identity collisions) before reading anything
+  ├─ re-checks attributes immediately before listing a directory or opening a file
+  ├─ reads at most 64 KiB + 1 byte of each candidate (read-only, shared)
+  ├─ Core: PluginMetadataParser.Parse(bytes, language, truncated) → PluginMetadata + diagnostics
+  ├─ re-checks each listed directory and read file again afterwards for link swaps
+  └─ builds PluginDescriptor(PluginId, PluginFileName, PluginMetadata)
+→ PluginDiscoveryResult(Plugins, Diagnostics, IsComplete, EntriesInspected, RootPath)
+```
+
+Core types live in `TrayWisp.Core.Plugins`:
+
+| Type | Role |
+| --- | --- |
+| `PluginId` | Root-relative path with `/` separators. Case-preserving, compared ordinal case-insensitively. |
+| `PluginFileName`, `PluginFileNameParser` | `name[.interval].extension` grammar. |
+| `RefreshInterval`, `RefreshIntervalUnit` | Validated 250 ms – 30 day interval. |
+| `PluginLanguage`, `PluginExecutionSupport`, `PluginLanguages` | Extension classification: planned vs deferred execution. |
+| `PluginMetadata`, `PluginMetadataParser` | Optional, inert metadata from `traywisp`/`swiftbar`/`xbar`/`bitbar` tags on comment-shaped lines (line-based, not a tokenizer). |
+| `PluginDescriptor` | Identity + file name + metadata + metadata diagnostics + display title. |
+| `PluginDiagnostic`, `PluginDiagnosticCode`, `PluginDiagnosticSeverity` | Structured diagnostics with stable codes. |
+| `PluginDiagnosticText` | Length-limits and escapes untrusted text (names, paths, system messages) in diagnostic messages and in `PluginDiagnostic.ToString()`, whose `Path` is otherwise kept raw. |
+
+Runtime types live in `TrayWisp.Runtime.Plugins`: `PluginDiscovery`, `PluginDiscoveryOptions` (traversal limits) and `PluginDiscoveryResult`.
+
+Design choices:
+
+- Models are immutable: get-only properties and `ImmutableArray`. Types whose invariants matter (`RefreshInterval`, `PluginFileName`, `PluginId`) can only be created through validating factories or parsers.
+- Parsers never throw on malformed input. They return diagnostics. Exceptions are reserved for caller errors (for example a relative plugin root) and cancellation.
+- Core receives bytes, never paths. Runtime alone touches the file system, which keeps the parsers fully unit-testable.
+- No dependency injection, no interfaces without a second implementation, and no new packages.
+- A discovered plugin is neither trusted nor runnable. Approval (Phase 3) and execution (Phase 4) will build on `PluginId` and `PluginDescriptor`.
+
 ## Planned component responsibilities
 
 Nothing in this section is implemented. It records the intended direction so that early decisions stay consistent with it. Phase numbers refer to [roadmap.md](roadmap.md).
 
 **Core**
-- Plugin identity and metadata models, such as a refresh interval taken from the file name, following the SwiftBar/xbar `name.interval.ext` convention (Phase 1).
 - A parser for SwiftBar/xbar-compatible text output, turning it into a structured menu model. Action parameters are parsed into data, not executed (Phase 2).
 - A versioned JSON output schema and parser (Phase 10).
 - Pure functions only. No file system, process or clock access, so behaviour is fully unit-testable.
 
 **Runtime**
-- Plugin discovery in a plugin directory. Discovery reads files and never executes them (Phase 1).
 - An approval store, and a single trust check that every execution path uses (Phase 3).
-- Interpreter resolution by file extension (for example PowerShell for `.ps1`, Python for `.py`), resolved to absolute paths. Only interpreters already installed on the machine are used (Phase 4).
+- Interpreter resolution by file extension (for example PowerShell for `.ps1`, Python for `.py`), resolved to absolute paths. Only interpreters already installed on the machine are used. Bash and batch execution is deferred (Phase 4).
 - Process execution (Phase 4):
   - The interpreter is launched directly with explicit arguments, never by evaluating a shell command string.
   - Each run has a timeout, bounded capture of stdout and stderr, and supports cancellation.
   - Process-tree termination is best effort.
-- Scheduling and hot reload: interval-based refresh, no overlapping runs of the same plugin, a global concurrency limit, and reaction to added, changed or removed plugin files (Phase 5).
+- Scheduling and hot reload: interval-based refresh from `RefreshInterval`, no overlapping runs of the same plugin, a global concurrency limit, and reaction to added, changed or removed plugin files (Phase 5).
 - Diagnostics records for each run: start time, duration, exit code, timeout, truncation, and the tail of stderr (Phases 4 and 6).
 
 **Desktop**

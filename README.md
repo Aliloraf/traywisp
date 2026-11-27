@@ -1,10 +1,10 @@
 # TrayWisp
 
-TrayWisp is a planned open-source, lightweight, script-powered desktop customization platform for Windows. When it is ready, you will place a script in a plugin folder and approve it explicitly. TrayWisp will then run it on a schedule and show its output in the Windows system tray, and later in a customizable status bar. A plugin management interface will cover approval and diagnostics. **No plugin functionality exists yet.** The repository currently contains only the project foundation.
+TrayWisp is a planned open-source, lightweight, script-powered desktop customization platform for Windows. When it is ready, you will place a script in a plugin folder and approve it explicitly. TrayWisp will then run it on a schedule and show its output in the Windows system tray, and later in a customizable status bar. A plugin management interface will cover approval and diagnostics. **TrayWisp cannot run plugins yet.** It can currently discover plugin files and read their file names and embedded metadata, without executing them.
 
 TrayWisp takes ideas from SwiftBar, xbar, Crossbar, YASB and Zebar. It is an independent implementation, not affiliated with any of those projects, and contains none of their source code.
 
-> **Status: early development.** Phase 0 (project foundation) is complete: project structure, build configuration, CI and documentation. Plugin features are planned for later phases. See [docs/roadmap.md](docs/roadmap.md).
+> **Status: early development.** Phase 0 (project foundation) and Phase 1 (plugin models, discovery and metadata) are complete. Output parsing, approval, execution and the system tray are planned for later phases. See [docs/roadmap.md](docs/roadmap.md).
 
 ## What exists today
 
@@ -14,7 +14,7 @@ TrayWisp takes ideas from SwiftBar, xbar, Crossbar, YASB and Zebar. It is an ind
 | Build-time enforcement of project dependency rules | Implemented |
 | `traywisp` CLI | Implemented: `--help` and `--version` only |
 | Desktop application (WPF) | Implemented: an informational window only, no tray icon |
-| Plugin models, discovery and metadata | Planned (Phase 1) |
+| Plugin models, discovery and metadata | Implemented (library only): `name.interval.ext` file names, language classification, SwiftBar/xbar-compatible metadata tags, read-only recursive discovery. See [docs/plugin-format.md](docs/plugin-format.md). Not yet exposed in the CLI or desktop app. |
 | SwiftBar/xbar-compatible text output parser | Planned (Phase 2) |
 | Plugin trust and approval | Planned (Phase 3) |
 | Script execution, scheduling and hot reload | Planned (Phases 4–5) |
@@ -57,26 +57,41 @@ dotnet run --project src/TrayWisp.Cli -- --version
 dotnet run --project src/TrayWisp.Desktop
 ```
 
+## Plugin files (format implemented, execution planned)
+
+A plugin is a script whose file name follows `name[.interval].extension`, for example `clock.5s.ps1` (every 5 seconds) or `hello.js` (manual refresh). PowerShell, Python and JavaScript are the planned execution targets. Bash and batch files are recognized but their execution is deferred. Optional metadata goes in comments (tags on code lines are ignored; see [plugin-format.md](docs/plugin-format.md#comments) for the exact, line-based rule):
+
+```powershell
+# <traywisp.title>Clock</traywisp.title>
+# <traywisp.version>1.0</traywisp.version>
+```
+
+`xbar.*`, `bitbar.*` and `swiftbar.*` tags are also read. TrayWisp supports a documented subset of the SwiftBar/xbar conventions. It is not fully compatible. See [docs/plugin-format.md](docs/plugin-format.md) for the grammar, limits, diagnostics and compatibility notes, and [plugins/examples](plugins/examples) for sample scripts. TrayWisp cannot run the samples yet.
+
 ## Repository layout
 
 ```text
 src/
-  TrayWisp.Core/       Platform-independent plugin models and output protocol (planned content)
-  TrayWisp.Runtime/    Platform-independent execution and scheduling (planned content)
+  TrayWisp.Core/       Platform-independent plugin models, file-name and metadata parsers
+  TrayWisp.Runtime/    Plugin discovery (implemented); execution and scheduling (planned)
   TrayWisp.Cli/        Command-line application (traywisp.exe)
   TrayWisp.Desktop/    WPF desktop application (TrayWisp.Desktop.exe)
 tests/
   TrayWisp.Core.Tests/
   TrayWisp.Runtime.Tests/
+plugins/
+  examples/            Sample plugin scripts (for future execution support)
 docs/
   architecture.md      Projects, dependency rules, platform constraints
+  plugin-format.md     File names, metadata, discovery, diagnostics, compatibility
   roadmap.md           Phased plan
-  security.md          Plugin trust model and planned execution safeguards
+  security.md          Plugin trust model, discovery limits and planned execution safeguards
 ```
 
 ## Documentation
 
 - [Architecture](docs/architecture.md)
+- [Plugin format](docs/plugin-format.md)
 - [Roadmap](docs/roadmap.md)
 - [Security model](docs/security.md)
 - [Contributing](CONTRIBUTING.md)
