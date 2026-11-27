@@ -1,0 +1,3 @@
+Good afternoon
+---
+This is an example TrayWisp plugin.

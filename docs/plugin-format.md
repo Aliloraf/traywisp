@@ -2,7 +2,7 @@
 
 This document specifies how TrayWisp recognizes plugin files, parses their file names and embedded metadata, and discovers them in a plugin directory.
 
-**Status (Phase 1).** Everything in this document is **implemented and tested**, except where a section says *planned* or *not implemented*. TrayWisp does **not** run plugins, parse plugin output, schedule refreshes, watch for file changes or record approvals yet. A discovered plugin is only a description of a file. It is not trusted and not runnable.
+**Status (Phase 1).** Everything in this document is **implemented and tested**, except where a section says *planned* or *not implemented*. TrayWisp does **not** run plugins, schedule refreshes, watch for file changes or record approvals yet. Plugin output text is specified separately in [output-protocol.md](output-protocol.md). A discovered plugin is only a description of a file. It is not trusted and not runnable.
 
 Code: `TrayWisp.Core/Plugins` (models, file-name and metadata parsers) and `TrayWisp.Runtime/Plugins` (filesystem discovery).
 
@@ -361,7 +361,7 @@ A single broken plugin never prevents discovery of the others:
 
 ## Diagnostics
 
-Every diagnostic has a severity, a stable code (shown as `TW` + number), an English message, and optionally a root-relative `Path` and a one-based `Line`.
+Every diagnostic has a severity, a stable code (shown as `TW` + number), an English message, and optionally a root-relative `Path` and a one-based `Line`. Output-parsing diagnostics use the separate range `TW400`–`TW499` (see [output-protocol.md](output-protocol.md#diagnostics)).
 
 Messages are safe to display. Metadata values are never included. File names, paths and operating-system messages are cut to a bounded length and quoted with `PluginDiagnosticText.Quote`, which shows control, format (including bidirectional), separator, unassigned and lone-surrogate characters, and the quote character itself, as `\uXXXX`. A literal backslash is shown as `\\`, so text that merely looks like an escape (a file literally named `a\u202Eb.ps1`, possible outside Windows) is shown as `'a\\u202Eb.ps1'` and cannot be mistaken for the escaped character, shown as `'a\u202Eb.ps1'`. Windows paths in messages therefore show doubled backslashes.
 

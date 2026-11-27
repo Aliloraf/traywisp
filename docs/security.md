@@ -1,6 +1,6 @@
 # Security model
 
-TrayWisp's core job is to run scripts on your behalf, so its security model has to be stated plainly. This document describes the trust model, the plugin discovery safeguards that are **implemented**, and the safeguards **planned** for plugin execution. **As of Phase 1, TrayWisp discovers plugin files and reads their metadata, but it does not execute plugins.** Apart from [Plugin discovery](#plugin-discovery-implemented), none of the controls below are implemented yet. They are design commitments that later phases (see [roadmap.md](roadmap.md)) must meet or explicitly revise.
+TrayWisp's core job is to run scripts on your behalf, so its security model has to be stated plainly. This document describes the trust model, the plugin discovery safeguards that are **implemented**, and the safeguards **planned** for plugin execution. **As of Phase 2, TrayWisp discovers plugin files, reads their metadata and can parse plugin output text, but it does not execute plugins or act on their output.** Apart from [Plugin discovery](#plugin-discovery-implemented) and [Output parsing](#output-parsing-implemented), none of the controls below are implemented yet. They are design commitments that later phases (see [roadmap.md](roadmap.md)) must meet or explicitly revise.
 
 To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 
@@ -52,6 +52,23 @@ Limitations. These checks are **not a complete security boundary**:
 - **Lookalike names.** Identity comparison approximates NTFS case-insensitivity. Homoglyphs and zero-width characters in file names, and format characters in metadata values, are not filtered. Display surfaces must account for them.
 - **Incomplete scans.** A plugin missing from an incomplete scan may still exist. Later phases must not treat that absence as removal, for example by revoking approval or dropping a schedule.
 
+## Output parsing (implemented)
+
+The output parser (Phase 2, specified in [output-protocol.md](output-protocol.md)) treats plugin output as untrusted data, even from an approved plugin:
+
+- **Inert.** Parsing never evaluates, expands or executes anything, and never touches the file system, network, clock or environment. `CoreIsolationTests` checks the compiled Core assembly for such references.
+- **Actions are requests, not permissions.** A command is an executable plus an explicit argument list, never a shell command line. `shell` and `bash` are just names for the executable. URLs are limited to `http` and `https`. `refresh` only ever means the producing plugin. Nothing is resolved, checked for existence, opened or launched. Every action must pass the planned [trust checks](#trust-checks-on-every-execution-path) and execution safeguards when activated.
+- **Fail closed.** Malformed syntax, duplicated or conflicting action parameters, unknown parameters on action lines and unsupported behavioural parameters (`alternate`, `key`, `webview`, …) suppress the whole action, including its refresh request. A parsed action is never partial. An invalid `disabled` value disables the item. A disabled item or an item with a submenu exposes no action.
+- **Bounded.** Input length, lines, line length, titles, menu nodes, depth, parameters, value length, arguments and diagnostics are capped. Output that exceeds a global cap, including a single over-long physical line, exposes no menu and no action. Problems confined to one item or parameter only drop that item, ignore those parameters or suppress that action. Processing is linear and uses no regular expressions.
+- **Incomplete output exposes nothing.** A cut can leave syntactically valid but different values (`param1=document.txt` cut to `param1=doc`), and the parser cannot detect this. A caller that passes `isTruncated: true` gets a failed result (`TW405`) with no menu and no action. The parser never infers truncation, for example from a missing final line feed, so Phase 4 must report every incomplete capture and must never pass truncated stdout as complete input.
+- **Streaming is rejected.** A SwiftBar `~~~` streaming delimiter fails the whole parse (`TW416`), so actions from earlier frames can never be shown alongside later ones.
+- **Display text is sanitized.** Control characters (including terminal escape sequences and a lone CR), line separators and invalid UTF-16 become U+FFFD, and directional formatting characters are removed. Action values containing them are rejected. Labels and tooltips made only of invisible characters (white space, format characters, default-ignorable code points such as Hangul fillers and variation selectors, and U+2800) are dropped. This is a best-effort safeguard, not a guarantee that every font renders every accepted label visibly.
+- **Strict URL syntax.** URLs must be well formed (`Uri.IsWellFormedOriginalString`), use only characters RFC 3986 allows, have valid two-digit percent escapes, and have no user information or rewritten hosts. Raw `|`, spaces, backslashes and control characters are rejected. Percent escapes, including escaped control characters such as `%0A`, are kept exactly as written and never decoded by the parser; future code must hand off `Uri.OriginalString`, never `Uri.ToString()`.
+- **Parsing is not authorization.** A complete parse only says the text is syntactically acceptable. It never authorizes running a command, opening a URL or refreshing a plugin.
+- **Safe diagnostics.** Messages never repeat labels, URLs, executables or argument values, so logging them does not leak plugin output.
+
+Limitations: homoglyphs, zero-width characters inside visible text and lookalike domains are not detected; display surfaces should show the exact URL or command behind an action. If a plugin passes untrusted data (for example an API response) into its own action parameters, the parser cannot tell.
+
 ## Planned safeguards
 
 ### Explicit approval
@@ -99,8 +116,9 @@ Further rules:
 ### Bounded output
 
 - Captured stdout and stderr are capped by total bytes, line count and line length.
-- Output beyond the limits is discarded, and the run is marked as truncated in diagnostics.
-- Embedded content such as base64 images will have its own size limits.
+- Output beyond the limits is discarded, and the run is marked as truncated in diagnostics. Truncated or otherwise incomplete stdout (byte limit, timeout, cancellation, read failure) is passed to the parser with `isTruncated: true`, so it produces no menu and no action. It is never passed as complete input.
+- Embedded content such as base64 images will have its own size limits. The Phase 2 parser does not decode images at all.
+- The Phase 2 parser applies its own limits to decoded text (see [output-protocol.md](output-protocol.md#limits)). Byte limits on captured output come with execution in Phase 4.
 - These limits protect the host from memory exhaustion and UI stalls caused by runaway or malicious output. They do not limit what the plugin itself does.
 
 ### Cancellation
@@ -134,10 +152,10 @@ Whether and how TrayWisp uses job objects will be decided and documented in Phas
 
 The SwiftBar/xbar text format lets output lines define actions, such as running a program with parameters or opening a URL when a menu item is clicked. The planned rules:
 
-- Actions are parsed into structured data: a program and an argument list, or a URL.
+- Actions are parsed into structured data: a program and an argument list, or a URL (implemented in Phase 2, see [Output parsing](#output-parsing-implemented)).
 - Program actions are launched directly with explicit arguments. TrayWisp never joins them into a command string. If a plugin names a shell as the program, for example `cmd.exe` with `/c`, that shell will interpret its arguments. That is the plugin's own request, within the plugin's trust, and TrayWisp displays it as such.
 - Trust checks apply when the action is activated (see [Trust checks on every execution path](#trust-checks-on-every-execution-path)).
-- URL actions are restricted to an allow-list of schemes, initially `http` and `https`.
+- URL actions are restricted to an allow-list of schemes, initially `http` and `https`. The parser already rejects every other scheme.
 - The interface and diagnostics show the exact program and arguments, or the URL, behind each action.
 - If a plugin copies untrusted data, such as API responses, into its action parameters, TrayWisp cannot tell. That is the plugin author's responsibility.
 

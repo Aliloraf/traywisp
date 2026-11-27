@@ -5,8 +5,8 @@ using Xunit;
 
 namespace TrayWisp.Core.Tests;
 
-// Guards the rule in docs/architecture.md that Core has no file system, process or clock access,
-// by inspecting the type and member references compiled into TrayWisp.Core.dll.
+// Guards the rule in docs/architecture.md that Core has no file system, process, clock, network or
+// environment access, by inspecting the type and member references compiled into TrayWisp.Core.dll.
 public sealed class CoreIsolationTests
 {
     private static readonly string[] ForbiddenTypes =
@@ -29,6 +29,11 @@ public sealed class CoreIsolationTests
         "System.TimeProvider",
         "System.Threading.Timer",
         "System.Net.Http.HttpClient",
+        "System.Net.Dns",
+        "System.Net.WebClient",
+        "System.Net.WebRequest",
+        "System.Net.Sockets.Socket",
+        "System.Drawing.Color",
         "System.Xml.XmlReader",
         "System.Xml.XmlDocument",
         "System.Text.RegularExpressions.Regex",
@@ -43,10 +48,18 @@ public sealed class CoreIsolationTests
         "System.DateTimeOffset.get_UtcNow",
         "System.Environment.get_TickCount",
         "System.Environment.get_TickCount64",
+
+        // Output actions are kept exactly as written: nothing may expand environment variables or
+        // resolve paths against the current environment.
+        "System.Environment.GetEnvironmentVariable",
+        "System.Environment.GetEnvironmentVariables",
+        "System.Environment.ExpandEnvironmentVariables",
+        "System.Environment.GetFolderPath",
+        "System.Environment.get_CurrentDirectory",
     ];
 
     [Fact]
-    public void CoreReferencesNoFileSystemProcessClockNetworkXmlOrRegexTypes()
+    public void CoreReferencesNoFileSystemProcessClockNetworkEnvironmentXmlOrRegexTypes()
     {
         using var stream = File.OpenRead(typeof(PluginId).Assembly.Location);
         using var reader = new PEReader(stream);
