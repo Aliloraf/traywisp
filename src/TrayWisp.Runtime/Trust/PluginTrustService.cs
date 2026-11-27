@@ -233,7 +233,7 @@ public sealed class PluginTrustService
             return DecisionFailed(failure!, key);
         }
 
-        return CheckCore(key!, expected: null, cancellationToken);
+        return CheckCore(key!, expected: null, retainOnApproval: false, cancellationToken, out _);
     }
 
     /// <summary>
@@ -255,12 +255,46 @@ public sealed class PluginTrustService
             return DecisionFailed(failure!, key);
         }
 
-        return CheckCore(key!, expectedApproval, cancellationToken);
+        return CheckCore(key!, expectedApproval, retainOnApproval: false, cancellationToken, out _);
     }
 
+    /// <summary>
+    /// The authoritative trust check for a plugin launch: exactly <see cref="CheckTrust(string, PluginId, CancellationToken)"/>,
+    /// and, only when the decision is <see cref="PluginTrustStatus.Approved"/>, an <see cref="PluginExecutionLease"/>
+    /// that keeps the inspected plugin file and the directories on its path open with the inspection's sharing
+    /// restrictions. The store lock is released before this returns; only the file system handles are retained.
+    /// The caller owns the lease and must dispose it when the run ends.
+    /// </summary>
+    /// <exception cref="OperationCanceledException">The check was cancelled. A cancelled check never reports approval and retains nothing.</exception>
     [SupportedOSPlatform("windows")]
-    private PluginTrustDecision CheckCore(PluginTrustKey key, PluginApprovalIdentity? expected, CancellationToken cancellationToken)
+    internal PluginTrustDecision CheckTrustForExecution(string rootPath, PluginId pluginId, CancellationToken cancellationToken, out PluginExecutionLease? lease)
     {
+        ArgumentNullException.ThrowIfNull(rootPath);
+        ArgumentNullException.ThrowIfNull(pluginId);
+        lease = null;
+        cancellationToken.ThrowIfCancellationRequested();
+
+        TrustFailure? failure = TryCreateKey(rootPath, pluginId, out PluginTrustKey? key);
+        if (failure is not null)
+        {
+            return DecisionFailed(failure, key);
+        }
+
+        PluginTrustDecision decision = CheckCore(key!, expected: null, retainOnApproval: true, cancellationToken, out InspectedPlugin? retained);
+        if (retained is not null)
+        {
+            lease = new PluginExecutionLease(decision, retained);
+        }
+
+        return decision;
+    }
+
+    // With retainOnApproval, an Approved decision hands the still-open inspection to the caller through
+    // retained instead of closing it. Every other outcome closes it before returning.
+    [SupportedOSPlatform("windows")]
+    private PluginTrustDecision CheckCore(PluginTrustKey key, PluginApprovalIdentity? expected, bool retainOnApproval, CancellationToken cancellationToken, out InspectedPlugin? retained)
+    {
+        retained = null;
         var store = new ApprovalStore(StorePath, _storeDirectory, _hooks);
         TrustFailure? failure = store.AcquireLock(_lockTimeout, cancellationToken, out StoreLock? storeLock);
         if (failure is not null)
@@ -308,7 +342,14 @@ public sealed class PluginTrustService
             switch (evaluation.Status)
             {
                 case PluginTrustStatus.Approved:
-                    return new PluginTrustDecision(PluginTrustStatus.Approved, key, current, approval!.Identity, held.FilePath, approvalInvalidated: false, []);
+                    var decision = new PluginTrustDecision(PluginTrustStatus.Approved, key, current, approval!.Identity, held.FilePath, approvalInvalidated: false, []);
+                    if (retainOnApproval && decision.IsApproved)
+                    {
+                        // The handles move to the caller; disposing held then closes nothing.
+                        retained = held.TransferHandles();
+                    }
+
+                    return decision;
 
                 case PluginTrustStatus.PendingApproval:
                     diagnostics.Add(PluginDiagnosticSeverity.Info, TrustDiagnosticCode.ApprovalPending, $"{what} has not been approved.");

@@ -28,6 +28,10 @@ public sealed class CoreIsolationTests
         "System.Runtime.InteropServices.Marshal",
         "System.Diagnostics.Process",
         "System.Diagnostics.ProcessStartInfo",
+        "Microsoft.Win32.SafeHandles.SafeProcessHandle",
+        "System.IO.Pipes.AnonymousPipeServerStream",
+        "System.IO.Pipes.PipeStream",
+        "System.Console",
         "System.Diagnostics.Stopwatch",
         "System.TimeProvider",
         "System.Threading.Timer",
@@ -67,6 +71,13 @@ public sealed class CoreIsolationTests
 
         // Approval generations are created in Runtime, never in Core.
         "System.Guid.NewGuid",
+
+        // Execution: interpreter resolution and process environments belong to Runtime.
+        "System.Environment.get_SystemDirectory",
+        "System.Environment.get_ProcessPath",
+        "System.Environment.get_ProcessId",
+        "System.Threading.Tasks.Task.Delay",
+        "System.Threading.Tasks.Task.Run",
     ];
 
     [Fact]
@@ -91,6 +102,23 @@ public sealed class CoreIsolationTests
         // Sanity check that the inspection sees real references.
         Assert.Contains("System.String", referencedTypes);
         Assert.Contains("System.Guid", referencedTypes);
+    }
+
+    [Fact]
+    public void CoreExecutionTypesArePureModels()
+    {
+        // Core's execution namespace holds diagnostics, statuses and pure decoding only: no type there owns a process,
+        // handle, stream or task.
+        Type[] types = [.. typeof(PluginId).Assembly.GetTypes().Where(type => type.Namespace == "TrayWisp.Core.Execution")];
+        Assert.NotEmpty(types);
+        foreach (Type type in types)
+        {
+            Assert.False(typeof(IDisposable).IsAssignableFrom(type), type.FullName);
+            Assert.All(
+                type.GetMembers(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.DeclaredOnly)
+                    .OfType<System.Reflection.MethodInfo>(),
+                method => Assert.False(typeof(Task).IsAssignableFrom(method.ReturnType) || typeof(Stream).IsAssignableFrom(method.ReturnType), $"{type.FullName}.{method.Name}"));
+        }
     }
 
     private static string FullName(MetadataReader metadata, TypeReferenceHandle handle)

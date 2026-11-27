@@ -241,7 +241,9 @@ internal static class TrustPaths
         return PathCheck.Ok;
     }
 
-    private static PathCheck CheckDrive(string driveRoot)
+    // The drive must be a local fixed, removable or RAM drive. Asks only for the drive type (GetDriveType); nothing on
+    // the drive is opened.
+    public static PathCheck CheckDrive(string driveRoot)
     {
         DriveType type;
         try
@@ -253,12 +255,15 @@ internal static class TrustPaths
             return new PathCheck(PathProblem.UnsupportedDrive, driveRoot, null);
         }
 
-        return type switch
+        return ClassifyDrive(driveRoot, type);
+    }
+
+    public static PathCheck ClassifyDrive(string driveRoot, DriveType type) =>
+        type switch
         {
             DriveType.Fixed or DriveType.Removable or DriveType.Ram => PathCheck.Ok,
             DriveType.Network => new PathCheck(PathProblem.Network, driveRoot, null),
             DriveType.NoRootDirectory => new PathCheck(PathProblem.NotFound, driveRoot, null),
             _ => new PathCheck(PathProblem.UnsupportedDrive, driveRoot, type.ToString()),
         };
-    }
 }

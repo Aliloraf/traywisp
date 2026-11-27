@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\TrayWisp.Runtime\TrayWisp.Runtime.csproj" />
+    <!-- Built and copied next to the tests, which launch it as a controlled stand-in interpreter. -->
+    <ProjectReference Include="..\TrayWisp.TestHelper\TrayWisp.TestHelper.csproj" />
   </ItemGroup>
 
 </Project>

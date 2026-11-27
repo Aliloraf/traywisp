@@ -30,7 +30,7 @@ public sealed record PluginFileName
     /// <summary>The language implied by the extension.</summary>
     public PluginLanguage Language { get; }
 
-    /// <summary>Whether execution of this language is planned or deferred.</summary>
+    /// <summary>Whether execution of this language is supported or deferred.</summary>
     public PluginExecutionSupport ExecutionSupport => PluginLanguages.GetExecutionSupport(Language);
 
     /// <summary><see langword="true"/> when the file name has no interval.</summary>

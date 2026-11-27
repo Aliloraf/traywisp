@@ -8,7 +8,7 @@ This roadmap is **tentative**. Scope and order beyond the current phase may chan
 | 1 | Plugin models, discovery and metadata | **Complete** |
 | 2 | SwiftBar/xbar-compatible text output parser | **Complete** |
 | 3 | Plugin trust and approval | **Complete** |
-| 4 | Script execution engine | Planned |
+| 4 | Script execution engine | **Complete** |
 | 5 | Scheduling and hot reload | Planned |
 | 6 | CLI and plugin diagnostics | Planned |
 | 7 | Native Windows system tray | Planned |
@@ -70,15 +70,23 @@ Specified in [trust-model.md](trust-model.md).
 
 Not in Phase 3: execution, interpreter resolution, scheduling, hot reload, record pruning, CLI commands, approval UI, signing or encryption of the store.
 
-## Phase 4: Script execution engine
+## Phase 4: Script execution engine (complete)
 
-- Resolves PowerShell, Python and other installed interpreters to absolute paths.
-- Launches the interpreter directly with explicit arguments, never by evaluating shell command strings.
-- Enforces a per-run timeout and bounded stdout/stderr capture, and supports cancellation.
-- Tracks whether stdout capture was complete, and passes `isTruncated: true` to the output parser whenever it was not (byte limit, timeout, cancellation, read failure). Incomplete stdout is never parsed as complete input.
-- Terminates the process tree on a best-effort basis with `Process.Kill(entireProcessTree: true)`, plus an investigation of Windows Job Objects whose outcome is documented (see [security.md](security.md#process-tree-termination)).
-- Re-checks trust with `PluginTrustService.CheckTrust` immediately before every launch, on every execution path, launches exactly the `ValidatedFilePath` returned by that check (never a path rebuilt from the identity or a discovery result), uses one long-lived trust service per store, and associates each run's output with the authorizing approval identity (see [trust-model.md](trust-model.md#integration-obligations-for-later-phases)).
-- Records diagnostics for each run.
+Specified in [execution-engine.md](execution-engine.md).
+
+- Runtime: `PluginExecutionService.RunAsync`, the one execution entry point, built on a long-lived `PluginTrustService`. No public unchecked launch path.
+- Execution of PowerShell (PowerShell 7 preferred, Windows PowerShell 5.1 as fallback), Python 3 and Node.js plugins. Bash and batch stay deferred and start nothing.
+- Deterministic interpreter resolution from explicit host configuration (no fallback when invalid), PowerShell 7's installation folder, validated PATH entries and the system directory. Rejects relative, empty, remote, device, alias and plugin-local entries, links, app execution aliases and files without a portable executable header. Nothing is launched or probed to resolve.
+- The authoritative trust check immediately before every launch, with an internal lease that keeps the validated file and its directories open for the whole run, without holding the store lock. Exactly the validated path is launched.
+- Direct launch with fixed arguments (`-NoLogo -NoProfile -NonInteractive -File`, `-E -u -X utf8`, `--`), no shell, closed standard input, the script's directory as working directory and a documented environment filter.
+- Concurrent byte-bounded capture (1 MiB stdout with exact-limit detection, 64 KiB stderr tail) on dedicated threads with interruptible reads, a monotonic timeout that includes the end of both streams, cancellation, and deterministic race handling.
+- Strict output decoding (UTF-8, UTF-16 with a byte order mark), the unchanged Phase 2 parser with `isTruncated: true` for every incomplete capture, and output published only for successful runs, with the authorizing approval identity.
+- Process cleanup: a per-run Windows job object (assigned after the start, kill-on-close, no breakaway) plus `Process.Kill(entireProcessTree: true)`, with a bounded grace period and a report that separates root exit from descendant cleanup.
+- Correction round after independent review: the inherited PowerShell execution policy is preserved; interpreter directories are validated (drive type, then directory chain) before candidate files are opened, and PATH is cut only between complete entries; tracked descendants left after a normal exit are terminated and confirmed (no release on exit); one cleanup boundary covers everything after `Process.Start` (`SupervisionFailed`, `TW634`); completion, deadline and cancellation are arbitrated by recorded monotonic times; real-interpreter tests are optional locally and required in CI.
+- Diagnostics `TW600`–`TW699`, bounded, with no environment values or output content.
+- Tests with a controlled helper program as interpreter (argument transport, environment, streams, limits, timeouts, cancellation, descendants, cleanup), the real interpreters where installed, and authorization tests that observe process creation.
+
+Not in Phase 4: scheduling, overlapping-run prevention, concurrency limits, hot reload, file watching, retries, execution history, execution of output actions, CLI commands, UI, race-free job assignment through a native launcher, sandboxing.
 
 ## Phase 5: Scheduling and hot reload
 

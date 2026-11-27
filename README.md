@@ -1,10 +1,10 @@
 # TrayWisp
 
-TrayWisp is a planned open-source, lightweight, script-powered desktop customization platform for Windows. When it is ready, you will place a script in a plugin folder and approve it explicitly. TrayWisp will then run it on a schedule and show its output in the Windows system tray, and later in a customizable status bar. A plugin management interface will cover approval and diagnostics. **TrayWisp cannot run plugins yet.** It can currently discover plugin files, read their file names and embedded metadata, parse SwiftBar/xbar-style output text into a menu model, and record explicit, content-bound approvals with a trust check for future execution, all without executing anything.
+TrayWisp is a planned open-source, lightweight, script-powered desktop customization platform for Windows. When it is ready, you will place a script in a plugin folder and approve it explicitly. TrayWisp will then run it on a schedule and show its output in the Windows system tray, and later in a customizable status bar. A plugin management interface will cover approval and diagnostics. Today TrayWisp is a set of libraries: it can discover plugin files, read their file names and embedded metadata, parse SwiftBar/xbar-style output text into a menu model, record explicit, content-bound approvals, and run an approved PowerShell, Python or JavaScript plugin once through its execution engine. **The execution engine is not exposed through the CLI or the desktop app yet**, and nothing schedules or displays plugins.
 
 TrayWisp takes ideas from SwiftBar, xbar, Crossbar, YASB and Zebar. It is an independent implementation, not affiliated with any of those projects, and contains none of their source code.
 
-> **Status: early development.** Phase 0 (project foundation), Phase 1 (plugin models, discovery and metadata), Phase 2 (text output parser) and Phase 3 (plugin trust and approval) are complete. Execution and the system tray are planned for later phases. See [docs/roadmap.md](docs/roadmap.md).
+> **Status: early development.** Phase 0 (project foundation), Phase 1 (plugin models, discovery and metadata), Phase 2 (text output parser), Phase 3 (plugin trust and approval) and Phase 4 (script execution engine) are complete. Scheduling, CLI commands and the system tray are planned for later phases. See [docs/roadmap.md](docs/roadmap.md).
 
 ## What exists today
 
@@ -16,8 +16,9 @@ TrayWisp takes ideas from SwiftBar, xbar, Crossbar, YASB and Zebar. It is an ind
 | Desktop application (WPF) | Implemented: an informational window only, no tray icon |
 | Plugin models, discovery and metadata | Implemented (library only): `name.interval.ext` file names, language classification, SwiftBar/xbar-compatible metadata tags, read-only recursive discovery. See [docs/plugin-format.md](docs/plugin-format.md). Not yet exposed in the CLI or desktop app. |
 | SwiftBar/xbar-compatible text output parser | Implemented (library only): header titles, nested menus and separators, formatting parameters, and URL, command and refresh actions parsed into inert data, with strict quoting, limits and diagnostics. A documented subset, not full compatibility. See [docs/output-protocol.md](docs/output-protocol.md). Not yet connected to execution or any display. |
-| Plugin trust and approval | Implemented (library only): explicit approval of a reviewed SHA-256 fingerprint of the whole file, bound to the plugin root and identity; one authoritative trust check that rehashes the file every time and invalidates approvals when content changes; stale-approval detection for future output actions; strict path validation (no links, aliases, network or hidden paths); a versioned, locked, atomically replaced JSON store in `%LOCALAPPDATA%\TrayWisp\trust`. See [docs/trust-model.md](docs/trust-model.md). Not yet exposed in the CLI or desktop app, and nothing runs plugins yet. |
-| Script execution, scheduling and hot reload | Planned (Phases 4–5) |
+| Plugin trust and approval | Implemented (library only): explicit approval of a reviewed SHA-256 fingerprint of the whole file, bound to the plugin root and identity; one authoritative trust check that rehashes the file every time and invalidates approvals when content changes; stale-approval detection for future output actions; strict path validation (no links, aliases, network or hidden paths); a versioned, locked, atomically replaced JSON store in `%LOCALAPPDATA%\TrayWisp\trust`. See [docs/trust-model.md](docs/trust-model.md). Not yet exposed in the CLI or desktop app. |
+| Script execution engine | Implemented (library only): runs an approved `.ps1`, `.py` or `.js` plugin once, after an authoritative trust check made immediately before the launch, with a deterministically resolved installed interpreter (PowerShell 7 or Windows PowerShell, Python 3, Node.js), fixed arguments and no shell, a filtered environment, a timeout, cancellation, 1 MiB stdout and 64 KiB stderr limits, strict UTF-8 decoding, the output parser, and job-object and process-tree termination. Bash and batch are not run. See [docs/execution-engine.md](docs/execution-engine.md). Not yet exposed in the CLI or desktop app. |
+| Scheduling and hot reload | Planned (Phase 5) |
 | CLI plugin commands and diagnostics | Planned (Phase 6) |
 | Native system tray, plugin management interface, customizable status bar | Planned (Phases 7–9) |
 | Versioned JSON output and extended plugin protocol | Planned (Phase 10) |
@@ -57,37 +58,39 @@ dotnet run --project src/TrayWisp.Cli -- --version
 dotnet run --project src/TrayWisp.Desktop
 ```
 
-## Plugin files (format implemented, execution planned)
+## Plugin files
 
-A plugin is a script whose file name follows `name[.interval].extension`, for example `clock.5s.ps1` (every 5 seconds) or `hello.js` (manual refresh). PowerShell, Python and JavaScript are the planned execution targets. Bash and batch files are recognized but their execution is deferred. Optional metadata goes in comments (tags on code lines are ignored; see [plugin-format.md](docs/plugin-format.md#comments) for the exact, line-based rule):
+A plugin is a script whose file name follows `name[.interval].extension`, for example `clock.5s.ps1` (every 5 seconds) or `hello.js` (manual refresh). PowerShell, Python and JavaScript plugins can be executed by the engine. Bash and batch files are recognized but their execution is deferred. Optional metadata goes in comments (tags on code lines are ignored; see [plugin-format.md](docs/plugin-format.md#comments) for the exact, line-based rule):
 
 ```powershell
 # <traywisp.title>Clock</traywisp.title>
 # <traywisp.version>1.0</traywisp.version>
 ```
 
-`xbar.*`, `bitbar.*` and `swiftbar.*` tags are also read. TrayWisp supports a documented subset of the SwiftBar/xbar conventions. It is not fully compatible. See [docs/plugin-format.md](docs/plugin-format.md) for the grammar, limits, diagnostics and compatibility notes, and [plugins/examples](plugins/examples) for sample scripts. TrayWisp cannot run the samples yet.
+`xbar.*`, `bitbar.*` and `swiftbar.*` tags are also read. TrayWisp supports a documented subset of the SwiftBar/xbar conventions. It is not fully compatible. See [docs/plugin-format.md](docs/plugin-format.md) for the grammar, limits, diagnostics and compatibility notes, and [plugins/examples](plugins/examples) for sample scripts. The execution engine can run the samples after approval, but no CLI command or tray does so yet.
 
 ## Repository layout
 
 ```text
 src/
   TrayWisp.Core/       Platform-independent plugin models, file-name, metadata and output parsers, trust models
-  TrayWisp.Runtime/    Plugin discovery and trust (implemented); execution and scheduling (planned)
+  TrayWisp.Runtime/    Plugin discovery, trust and the execution engine (implemented); scheduling (planned)
   TrayWisp.Cli/        Command-line application (traywisp.exe)
   TrayWisp.Desktop/    WPF desktop application (TrayWisp.Desktop.exe)
 tests/
   TrayWisp.Core.Tests/
   TrayWisp.Runtime.Tests/
+  TrayWisp.TestHelper/ Controlled stand-in interpreter used by the execution tests (not shipped)
 plugins/
-  examples/            Sample plugin scripts (for future execution support)
+  examples/            Sample plugin scripts
 docs/
   architecture.md      Projects, dependency rules, platform constraints
   plugin-format.md     File names, metadata, discovery, diagnostics, compatibility
   output-protocol.md   Plugin output text format, actions, limits, compatibility
   trust-model.md       Plugin approval, fingerprints, trust checks, approval store
+  execution-engine.md  Interpreter resolution, process execution, capture, encoding, cleanup
   roadmap.md           Phased plan
-  security.md          Security model, discovery, output and approval safeguards, planned execution safeguards
+  security.md          Security model and the discovery, output, approval and execution safeguards
 ```
 
 ## Documentation
@@ -96,6 +99,7 @@ docs/
 - [Plugin format](docs/plugin-format.md)
 - [Output protocol](docs/output-protocol.md)
 - [Trust model](docs/trust-model.md)
+- [Execution engine](docs/execution-engine.md)
 - [Roadmap](docs/roadmap.md)
 - [Security model](docs/security.md)
 - [Contributing](CONTRIBUTING.md)

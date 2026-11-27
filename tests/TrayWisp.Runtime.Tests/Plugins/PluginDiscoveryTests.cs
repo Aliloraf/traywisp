@@ -72,7 +72,7 @@ public sealed class PluginDiscoveryTests
         PluginDescriptor clock = result.Plugins.Single(plugin => plugin.Id.Value == "clock.ps1");
         Assert.Equal("clock", clock.DisplayTitle);
         Assert.True(clock.FileName.IsManualRefresh);
-        Assert.Equal(PluginExecutionSupport.Planned, clock.FileName.ExecutionSupport);
+        Assert.Equal(PluginExecutionSupport.Supported, clock.FileName.ExecutionSupport);
 
         PluginDescriptor weather = result.Plugins.Single(plugin => plugin.Id.Value == "weather.10m.py");
         Assert.Equal("Weather", weather.DisplayTitle);

@@ -41,3 +41,10 @@ jobs:
 
       - name: Test
         run: dotnet test --solution TrayWisp.slnx --configuration Release --no-build
+        env:
+          # The runner provides Windows PowerShell 5.1, PowerShell 7, Python 3 and Node.js, so the real-interpreter
+          # tests are required here: a missing or blocked interpreter fails them instead of skipping them.
+          TRAYWISP_REQUIRED_INTERPRETERS: all
+          # Process scope only, for this test invocation: lets the locally created test scripts run. It changes no
+          # user or machine policy, and the production engine never sets one (see docs/execution-engine.md, "Tests").
+          PSExecutionPolicyPreference: RemoteSigned

@@ -2,7 +2,7 @@
 
 This document specifies how TrayWisp parses the text a plugin prints: the SwiftBar/xbar-style format of header titles, a dropdown menu, formatting parameters and action parameters.
 
-**Status (Phase 2).** The parser described here is **implemented and tested** as a library in `TrayWisp.Core/Output`. Nothing uses it yet. TrayWisp still **cannot run plugins** (Phase 4) and **cannot display** titles or menus (Phases 7 and 9). Parsed actions are inert data. Nothing in this phase opens a URL, starts a process or refreshes a plugin.
+**Status (Phase 2, used by Phase 4).** The parser described here is **implemented and tested** as a library in `TrayWisp.Core/Output`. The execution engine ([execution-engine.md](execution-engine.md)) captures, decodes and parses plugin output with it. TrayWisp still **cannot display** titles or menus (Phases 7 and 9). Parsed actions are inert data. Nothing in this phase opens a URL, starts a process or refreshes a plugin.
 
 Related documents: [plugin-format.md](plugin-format.md) (file names, metadata, discovery) and [security.md](security.md) (trust model).
 
@@ -57,8 +57,8 @@ The parser has no file system, process, network, clock or environment access. `C
 
 ## Input
 
-- **Decoded standard output only.** The input is the plugin's stdout as text. Standard error must not be mixed in. Choosing the encoding, decoding bytes and enforcing byte limits are Phase 4's job. The parser's own limits (below) apply to the decoded text.
-- **Complete output only.** The parser cannot tell a complete output from a prefix of one. A cut can leave a line that is still valid but means something else: `Run | shell=editor.exe param1=document.txt` cut after `doc` is a valid command with the argument `doc`. A missing final line feed is **not** treated as a sign of truncation, because many plugins legitimately omit it. The caller must therefore say when the text is incomplete by passing `isTruncated: true`. The parse then fails with `TW405`, and nothing is exposed, not even a syntactically valid prefix. **Phase 4 is responsible for knowing whether capture was complete.** It must pass `isTruncated: true` whenever stdout was cut at a byte limit, the process was stopped by a timeout or cancellation, reading failed, or the stream ended for any reason other than the plugin finishing its output. It must never pass truncated or otherwise incomplete stdout as complete input.
+- **Decoded standard output only.** The input is the plugin's stdout as text. Standard error must not be mixed in. Choosing the encoding, decoding bytes and enforcing byte limits are the execution engine's job: 1 MiB of stdout, strict UTF-8 (or UTF-16 with a byte order mark), never replacement characters (see [execution-engine.md](execution-engine.md#output-encoding)). The parser's own limits (below) apply to the decoded text.
+- **Complete output only.** The parser cannot tell a complete output from a prefix of one. A cut can leave a line that is still valid but means something else: `Run | shell=editor.exe param1=document.txt` cut after `doc` is a valid command with the argument `doc`. A missing final line feed is **not** treated as a sign of truncation, because many plugins legitimately omit it. The caller must therefore say when the text is incomplete by passing `isTruncated: true`. The parse then fails with `TW405`, and nothing is exposed, not even a syntactically valid prefix. **The execution engine knows whether capture was complete** (implemented in Phase 4). It passes `isTruncated: true` whenever stdout exceeded its byte limit, the process was stopped by a timeout or cancellation, reading failed, or the run ended before stdout reached end-of-file, and it never passes such stdout as complete input. It also publishes parsed output only for a run that exited with code 0 (see [execution-engine.md](execution-engine.md#parser-integration)).
 - **Byte order mark.** One leading U+FEFF is skipped. U+FEFF anywhere else is ordinary text. The BOM counts toward the input length limit.
 - **Line endings.** Lines end at LF. A CR immediately before an LF is part of the line ending, so LF and CRLF give identical results. A final LF ends the last line and does not start an empty one.
 - **Lone CR.** A CR that is not followed by LF is **not** a line break. It is a control character inside the line, and is replaced in display text (see [Text and Unicode](#text-and-unicode)). Because CR is white space, a line that consists only of CRs is blank, and a trailing CR does not stop a line from being a separator.
@@ -230,7 +230,7 @@ Homoglyphs and invisible characters inside otherwise visible text (such as zero-
 
 ## Actions
 
-An action is an **untrusted request**, not permission to do anything. The parser only produces data. Any future code that carries out an action must first pass the Phase 3 trust check (the producing plugin is still approved under the same approval identity, see [trust-model.md](trust-model.md#approval-generations-and-stale-output)) and the Phase 4 execution safeguards (direct launch with explicit arguments, timeouts, bounded output). See [security.md](security.md#output-driven-actions).
+An action is an **untrusted request**, not permission to do anything. The parser only produces data. Any future code that carries out an action must first pass the Phase 3 trust check (the producing plugin is still approved under the same approval identity, `PluginExecutionResult.Approval`, see [trust-model.md](trust-model.md#approval-generations-and-stale-output)) and use the same execution safeguards as plugin runs (direct launch with explicit arguments, timeouts, bounded output). The Phase 4 engine executes no action. See [security.md](security.md#output-driven-actions).
 
 | Parameters | Result |
 | --- | --- |
@@ -253,7 +253,7 @@ An action is an **untrusted request**, not permission to do anything. The parser
   - at most **32 arguments**, so the indices are `param0`–`param31` or `param1`–`param32`;
   - rejected (`TW442`, or `TW432` for duplicates): a duplicated index, leading zeros (`param01`), a missing index (`param`), an index above 32 (including indices that would overflow an integer), and values with control characters, lone surrogates or bidirectional controls;
   - arguments are ordered by **numeric** index (`param10` after `param9`). Empty arguments (`param1=""`) are kept.
-- `terminal=true|false` is recorded as a **preference** (`CommandAction.RunInTerminal`, `null` when not given). Nothing is launched. SwiftBar and xbar open a terminal when `terminal` is omitted. Whether TrayWisp will honour terminals at all is a Phase 4 decision.
+- `terminal=true|false` is recorded as a **preference** (`CommandAction.RunInTerminal`, `null` when not given). Nothing is launched. SwiftBar and xbar open a terminal when `terminal` is omitted. The Phase 4 engine executes no action; whether TrayWisp will honour terminals for actions is decided with output-driven actions (Phase 7).
 - `paramN` or `terminal` without `shell`/`bash` is an orphan (`TW444`). The line's whole action is suppressed, including `refresh`.
 
 ### URLs
@@ -307,7 +307,7 @@ On a line without action parameters, behavioural parameters are ignored with a `
 
 ## Limits
 
-These are parser-level limits on decoded text. Phase 4 will separately cap captured stdout bytes before decoding.
+These are parser-level limits on decoded text. The execution engine separately caps captured stdout at 1 MiB before decoding, so a run can capture more text than the parser accepts; the parser's limits still apply.
 
 | Limit | Value | When exceeded |
 | --- | --- | --- |

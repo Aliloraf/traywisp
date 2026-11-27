@@ -19,6 +19,18 @@ internal sealed class InspectedPlugin(PluginFingerprint plugin, string filePath,
 
     public void Dispose() => Close(handles);
 
+    // Moves the open handles to a new instance, which then owns them. This instance keeps its values but holds
+    // nothing, so disposing it closes nothing.
+    public InspectedPlugin TransferHandles()
+    {
+        var moved = new InspectedPlugin(Plugin, FilePath, [.. handles]);
+        handles.Clear();
+        return moved;
+    }
+
+    // Whether any handle is still held (for tests of handle release).
+    internal bool HoldsHandles => handles.Count > 0;
+
     internal static void Close(List<SafeFileHandle> handles)
     {
         for (int i = handles.Count - 1; i >= 0; i--)

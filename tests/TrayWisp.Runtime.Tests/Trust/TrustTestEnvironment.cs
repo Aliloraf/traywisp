@@ -65,6 +65,9 @@ internal sealed class TrustTestEnvironment : IDisposable
     // Denies the current user reading the file's data until the environment is disposed.
     public void DenyReading(string file) => AddDenyRule(new FileInfo(file), FileSystemRights.ReadData);
 
+    // Denies the current user executing the file until the environment is disposed.
+    public void DenyExecuting(string file) => AddDenyRule(new FileInfo(file), FileSystemRights.ExecuteFile);
+
     // Denies the current user listing the directory until the environment is disposed.
     public void DenyListing(string directory) => AddDenyRule(new DirectoryInfo(directory), FileSystemRights.ListDirectory | FileSystemRights.ReadData);
 

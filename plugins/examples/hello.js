@@ -1,7 +1,7 @@
 // <traywisp.title>Hello</traywisp.title>
 // <traywisp.version>1.0</traywisp.version>
 // <traywisp.author>TrayWisp contributors</traywisp.author>
-// <traywisp.desc>Prints a greeting. Example plugin; TrayWisp cannot run plugins yet.</traywisp.desc>
+// <traywisp.desc>Prints a greeting. Example plugin.</traywisp.desc>
 // <traywisp.dependencies>Node.js</traywisp.dependencies>
 //
 // The file name has no interval (hello.js), so this plugin refreshes only on demand.

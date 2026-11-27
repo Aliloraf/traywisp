@@ -23,7 +23,7 @@ public sealed class ExamplePluginsTests
             Assert.Empty(plugin.Diagnostics);
             Assert.NotNull(plugin.Metadata.Title);
             Assert.NotNull(plugin.Metadata.Description);
-            Assert.Equal(PluginExecutionSupport.Planned, plugin.FileName.ExecutionSupport);
+            Assert.Equal(PluginExecutionSupport.Supported, plugin.FileName.ExecutionSupport);
         });
         string[] titles = ["Clock", "Day progress", "Hello"];
         Assert.Equal(titles, result.Plugins.Select(plugin => plugin.DisplayTitle));

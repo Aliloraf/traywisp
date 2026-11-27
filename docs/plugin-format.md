@@ -2,7 +2,7 @@
 
 This document specifies how TrayWisp recognizes plugin files, parses their file names and embedded metadata, and discovers them in a plugin directory.
 
-**Status (Phase 1).** Everything in this document is **implemented and tested**, except where a section says *planned* or *not implemented*. TrayWisp does **not** run plugins, schedule refreshes or watch for file changes yet. Plugin output text is specified separately in [output-protocol.md](output-protocol.md), and approval in [trust-model.md](trust-model.md). A discovered plugin is only a description of a file. It is not trusted and not runnable: discovery never approves anything.
+**Status (Phase 1).** Everything in this document is **implemented and tested**, except where a section says *planned* or *not implemented*. Discovery never runs plugins. The execution engine (Phase 4, [execution-engine.md](execution-engine.md)) runs approved plugins on request, but nothing schedules refreshes or watches for file changes yet. Plugin output text is specified separately in [output-protocol.md](output-protocol.md), and approval in [trust-model.md](trust-model.md). A discovered plugin is only a description of a file. It is not trusted and not runnable: discovery never approves anything.
 
 Code: `TrayWisp.Core/Plugins` (models, file-name and metadata parsers) and `TrayWisp.Runtime/Plugins` (filesystem discovery).
 
@@ -110,13 +110,13 @@ The extension alone decides the language. TrayWisp does not read shebang lines, 
 
 | Extensions | Language | Execution support |
 | --- | --- | --- |
-| `.ps1` | PowerShell | **Planned.** A candidate for native interpreter integration (Phase 4). |
-| `.py` | Python | **Planned** (Phase 4). |
-| `.js` | JavaScript | **Planned** (Phase 4). |
+| `.ps1` | PowerShell | **Supported** (Phase 4): PowerShell 7 or Windows PowerShell. |
+| `.py` | Python | **Supported** (Phase 4): Python 3. |
+| `.js` | JavaScript | **Supported** (Phase 4): Node.js. |
 | `.sh` | Bash / POSIX shell | **Deferred.** Recognized and discovered, with no committed execution design. |
 | `.bat`, `.cmd` | Windows batch | **Deferred.** `cmd.exe` parses arguments differently (see [security.md](security.md#process-launch-explicit-arguments-not-shell-command-strings)). |
 
-No language is executable in Phase 1. Any other extension is not a plugin, including `.exe`, `.com`, `.msi`, `.vbs`, `.psm1`, `.pyw`, `.mjs` and compiled-plugin conventions such as xbar's `.cswift` and `.cgo`. TrayWisp never discovers arbitrary executables as plugins.
+`PluginExecutionSupport` is `Supported` or `Deferred`; interpreter availability is decided separately at run time (see [execution-engine.md](execution-engine.md#supported-languages)). Discovery itself never resolves interpreters or runs anything. Any other extension is not a plugin, including `.exe`, `.com`, `.msi`, `.vbs`, `.psm1`, `.pyw`, `.mjs` and compiled-plugin conventions such as xbar's `.cswift` and `.cgo`. TrayWisp never discovers arbitrary executables as plugins.
 
 ## Embedded metadata
 
@@ -412,7 +412,7 @@ TrayWisp implements a **compatible subset** of the publicly documented SwiftBar 
 | File name | `{name}.{time}.{ext}` | Same convention. |
 | Interval units | SwiftBar: `ms`, `s`, `m`, `h`, `d`. xbar documents `s`, `m`, `h`, `d`. | `ms`, `s`, `m`, `h`, `d`, case-insensitive, limited to 250 ms – 30 days. |
 | Malformed intervals | Not specified. | Rejected with a diagnostic, never treated as part of the name. A bare number (`backup.2024`) is part of the name, with an informational note. |
-| Languages | Any executable file. The shebang selects the interpreter. | Only `.ps1`, `.py`, `.js` (execution planned) and `.sh`, `.bat`, `.cmd` (execution deferred). No arbitrary executables. Shebangs are not used. |
+| Languages | Any executable file. The shebang selects the interpreter. | Only `.ps1`, `.py`, `.js` (executable) and `.sh`, `.bat`, `.cmd` (execution deferred). No arbitrary executables. Shebangs are not used. |
 | Executable bit | Required (`chmod +x`). | Not applicable on Windows. Not checked. |
 | Metadata tags | `<xbar.*>` / `<bitbar.*>` "usually in comments", with "any" comment characters: title, version, author, author.github, desc, image, dependencies, abouturl, plus `var`, `droptypes`. | Descriptive fields in the `traywisp`, `swiftbar`, `xbar`, `bitbar` namespaces, read only from comments in the language's own syntax (see [Comments](#comments)). `var` and `droptypes` are recognized but unsupported. |
 | Namespace precedence | Not specified. | `traywisp` > `swiftbar` > `xbar` > `bitbar`, with documented duplicate handling. |

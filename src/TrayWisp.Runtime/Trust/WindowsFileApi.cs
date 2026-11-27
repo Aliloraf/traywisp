@@ -75,6 +75,10 @@ internal static partial class WindowsFileApi
 
         // The store lock file: created if missing, never shared.
         Lock,
+
+        // An interpreter executable, read to check its format (directories open too, and are then rejected). Shared with
+        // everyone, so it disturbs nothing.
+        ReadShared,
     }
 
     public static string Extended(string normalizedPath) => ExtendedPrefix + normalizedPath;
@@ -90,6 +94,7 @@ internal static partial class WindowsFileApi
             OpenMode.ReadFileExclusive => (GenericRead, FileShareRead, OpenExisting, NoFollow | FileFlagSequentialScan),
             OpenMode.ReadStore => (GenericRead, FileShareRead, OpenExisting, NoFollow | FileFlagSequentialScan),
             OpenMode.Lock => (GenericRead | GenericWrite, 0u, OpenAlways, NoFollow | FileAttributeNormal),
+            OpenMode.ReadShared => (GenericRead, FileShareRead | FileShareWrite | FileShareDelete, OpenExisting, NoFollow | FileFlagBackupSemantics),
             _ => throw new ArgumentOutOfRangeException(nameof(mode)),
         };
 
@@ -105,17 +110,26 @@ internal static partial class WindowsFileApi
         return handle;
     }
 
+    /// <summary>Reparse tag of an app execution alias, such as the Microsoft Store shortcuts in <c>WindowsApps</c>.</summary>
+    public const uint ReparseTagAppExecutionLink = 0x8000_001B;
+
     /// <summary>Attributes of the opened entry itself (the reparse point, not its target, given the open flags).</summary>
-    public static bool TryGetAttributes(SafeFileHandle handle, out FileAttributes attributes, out int error)
+    public static bool TryGetAttributes(SafeFileHandle handle, out FileAttributes attributes, out int error) =>
+        TryGetAttributes(handle, out attributes, out _, out error);
+
+    /// <summary>Attributes and reparse tag (zero unless it is a reparse point) of the opened entry itself.</summary>
+    public static bool TryGetAttributes(SafeFileHandle handle, out FileAttributes attributes, out uint reparseTag, out int error)
     {
         if (GetFileInformationByHandleEx(handle, FileAttributeTagInfoClass, out FileAttributeTagInformation info, (uint)Marshal.SizeOf<FileAttributeTagInformation>()))
         {
             attributes = (FileAttributes)info.FileAttributes;
+            reparseTag = (attributes & FileAttributes.ReparsePoint) != 0 ? info.ReparseTag : 0;
             error = 0;
             return true;
         }
 
         attributes = 0;
+        reparseTag = 0;
         error = Marshal.GetLastPInvokeError();
         return false;
     }
