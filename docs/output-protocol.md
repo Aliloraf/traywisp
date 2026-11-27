@@ -230,7 +230,7 @@ Homoglyphs and invisible characters inside otherwise visible text (such as zero-
 
 ## Actions
 
-An action is an **untrusted request**, not permission to do anything. The parser only produces data. Any future code that carries out an action must first pass the Phase 3 trust check (the plugin is still approved with the same content hash) and the Phase 4 execution safeguards (direct launch with explicit arguments, timeouts, bounded output). See [security.md](security.md#output-driven-actions).
+An action is an **untrusted request**, not permission to do anything. The parser only produces data. Any future code that carries out an action must first pass the Phase 3 trust check (the producing plugin is still approved under the same approval identity, see [trust-model.md](trust-model.md#approval-generations-and-stale-output)) and the Phase 4 execution safeguards (direct launch with explicit arguments, timeouts, bounded output). See [security.md](security.md#output-driven-actions).
 
 | Parameters | Result |
 | --- | --- |

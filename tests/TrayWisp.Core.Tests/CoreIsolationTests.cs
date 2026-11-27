@@ -23,6 +23,9 @@ public sealed class CoreIsolationTests
         "System.IO.StreamReader",
         "System.IO.StreamWriter",
         "System.IO.Enumeration.FileSystemEnumerable`1",
+        "System.IO.RandomAccess",
+        "Microsoft.Win32.SafeHandles.SafeFileHandle",
+        "System.Runtime.InteropServices.Marshal",
         "System.Diagnostics.Process",
         "System.Diagnostics.ProcessStartInfo",
         "System.Diagnostics.Stopwatch",
@@ -37,6 +40,11 @@ public sealed class CoreIsolationTests
         "System.Xml.XmlReader",
         "System.Xml.XmlDocument",
         "System.Text.RegularExpressions.Regex",
+
+        // Trust: Core holds models and pure decisions only. Hashing file content belongs to Runtime.
+        "System.Security.Cryptography.IncrementalHash",
+        "System.Security.Cryptography.SHA256",
+        "System.Security.Cryptography.HashAlgorithm",
     ];
 
     private static readonly string[] ForbiddenMembers =
@@ -56,6 +64,9 @@ public sealed class CoreIsolationTests
         "System.Environment.ExpandEnvironmentVariables",
         "System.Environment.GetFolderPath",
         "System.Environment.get_CurrentDirectory",
+
+        // Approval generations are created in Runtime, never in Core.
+        "System.Guid.NewGuid",
     ];
 
     [Fact]
@@ -79,6 +90,7 @@ public sealed class CoreIsolationTests
 
         // Sanity check that the inspection sees real references.
         Assert.Contains("System.String", referencedTypes);
+        Assert.Contains("System.Guid", referencedTypes);
     }
 
     private static string FullName(MetadataReader metadata, TypeReferenceHandle handle)

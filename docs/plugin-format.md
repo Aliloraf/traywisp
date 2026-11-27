@@ -2,7 +2,7 @@
 
 This document specifies how TrayWisp recognizes plugin files, parses their file names and embedded metadata, and discovers them in a plugin directory.
 
-**Status (Phase 1).** Everything in this document is **implemented and tested**, except where a section says *planned* or *not implemented*. TrayWisp does **not** run plugins, schedule refreshes, watch for file changes or record approvals yet. Plugin output text is specified separately in [output-protocol.md](output-protocol.md). A discovered plugin is only a description of a file. It is not trusted and not runnable.
+**Status (Phase 1).** Everything in this document is **implemented and tested**, except where a section says *planned* or *not implemented*. TrayWisp does **not** run plugins, schedule refreshes or watch for file changes yet. Plugin output text is specified separately in [output-protocol.md](output-protocol.md), and approval in [trust-model.md](trust-model.md). A discovered plugin is only a description of a file. It is not trusted and not runnable: discovery never approves anything.
 
 Code: `TrayWisp.Core/Plugins` (models, file-name and metadata parsers) and `TrayWisp.Runtime/Plugins` (filesystem discovery).
 
@@ -296,7 +296,7 @@ Keep plugins in a local folder that is not synchronized. A future default plugin
 - A plugin's identity (`PluginId`) is its **path relative to the root**, including directories, file name and extension, with `/` as the separator: `work/github.notifications.5m.py`.
 - The original casing is preserved, but identities **compare ordinal case-insensitively**, approximating Windows file-name semantics. (NTFS uses its own upper-case table, which can differ from .NET's ordinal case folding for a few characters.) No Unicode normalization is applied, matching NTFS. Equality, hashing and ordering are consistent: two identities compare as equal exactly when `Equals` is true.
 - Files with the same name in different directories are different plugins (`home/clock.5s.ps1` and `work/clock.5s.ps1`).
-- An identity is **relative to its root**. The same identity under two different roots refers to two different files. Anything that stores per-plugin state, in particular the planned approval records (Phase 3), must be keyed by the normalized plugin root **and** the identity **and** the content hash, never by the identity alone.
+- An identity is **relative to its root**. The same identity under two different roots refers to two different files. Anything that stores per-plugin state must be keyed by the normalized plugin root **and** the identity, never by the identity alone. Approval records (Phase 3, see [trust-model.md](trust-model.md#approval-identity)) are keyed this way and also bound to the content hash.
 - Results are ordered by identity.
 
 ### Collisions
@@ -361,7 +361,7 @@ A single broken plugin never prevents discovery of the others:
 
 ## Diagnostics
 
-Every diagnostic has a severity, a stable code (shown as `TW` + number), an English message, and optionally a root-relative `Path` and a one-based `Line`. Output-parsing diagnostics use the separate range `TW400`–`TW499` (see [output-protocol.md](output-protocol.md#diagnostics)).
+Every diagnostic has a severity, a stable code (shown as `TW` + number), an English message, and optionally a root-relative `Path` and a one-based `Line`. Output-parsing diagnostics use the separate range `TW400`–`TW499` (see [output-protocol.md](output-protocol.md#diagnostics)), and trust diagnostics `TW500`–`TW599` (see [trust-model.md](trust-model.md#diagnostics)).
 
 Messages are safe to display. Metadata values are never included. File names, paths and operating-system messages are cut to a bounded length and quoted with `PluginDiagnosticText.Quote`, which shows control, format (including bidirectional), separator, unassigned and lone-surrogate characters, and the quote character itself, as `\uXXXX`. A literal backslash is shown as `\\`, so text that merely looks like an escape (a file literally named `a\u202Eb.ps1`, possible outside Windows) is shown as `'a\\u202Eb.ps1'` and cannot be mistaken for the escaped character, shown as `'a\u202Eb.ps1'`. Windows paths in messages therefore show doubled backslashes.
 
@@ -434,7 +434,7 @@ Discovery is designed not to execute, modify or follow anything, but it is **not
   - an entry swapped for a link just after the pre-use check and swapped back before the post-use check is not noticed;
   - a directory *above* the current one can be replaced by a junction while its subtree is being scanned, and later paths then resolve through it.
 
-  Closing these windows needs handle-relative opens (opening each entry relative to an already-opened parent directory, without following links). .NET does not offer that, and adding Windows-specific interop is left to the approval and execution phases, which must re-verify files before every launch anyway. The consequence for discovery is limited to reading at most 64 KiB of a file the current user can already read, and extracting inert metadata from it. Nothing is executed or written.
+  Closing these windows needs handle-relative opens (opening each entry relative to an already-opened parent directory, without following links). .NET does not offer that, and discovery does not use Windows-specific interop. The Phase 3 trust checks do, for the one path being approved or checked: they open each component without following links, hold it open and verify the final path (see [trust-model.md](trust-model.md#file-system-validation)). Execution must re-verify trust before every launch anyway. The consequence for discovery is limited to reading at most 64 KiB of a file the current user can already read, and extracting inert metadata from it. Nothing is executed or written.
 - **Ancestors of the root** are not checked for reparse points. A root reached through a linked parent directory is scanned.
 - **Hard links** are not reparse points and cannot be detected cheaply. A hard link inside the root to a file elsewhere on the same volume is discovered like any other file.
 - **Special files on non-Windows platforms.** On Linux and macOS, a FIFO or device file with a plugin extension is not detected before it is opened, and opening a FIFO can block. Windows directories cannot contain such entries, and the product targets Windows. Core and Runtime build on other platforms only for development and testing.

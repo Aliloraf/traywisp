@@ -1,10 +1,10 @@
 # TrayWisp
 
-TrayWisp is a planned open-source, lightweight, script-powered desktop customization platform for Windows. When it is ready, you will place a script in a plugin folder and approve it explicitly. TrayWisp will then run it on a schedule and show its output in the Windows system tray, and later in a customizable status bar. A plugin management interface will cover approval and diagnostics. **TrayWisp cannot run plugins yet.** It can currently discover plugin files, read their file names and embedded metadata, and parse SwiftBar/xbar-style output text into a menu model, all without executing anything.
+TrayWisp is a planned open-source, lightweight, script-powered desktop customization platform for Windows. When it is ready, you will place a script in a plugin folder and approve it explicitly. TrayWisp will then run it on a schedule and show its output in the Windows system tray, and later in a customizable status bar. A plugin management interface will cover approval and diagnostics. **TrayWisp cannot run plugins yet.** It can currently discover plugin files, read their file names and embedded metadata, parse SwiftBar/xbar-style output text into a menu model, and record explicit, content-bound approvals with a trust check for future execution, all without executing anything.
 
 TrayWisp takes ideas from SwiftBar, xbar, Crossbar, YASB and Zebar. It is an independent implementation, not affiliated with any of those projects, and contains none of their source code.
 
-> **Status: early development.** Phase 0 (project foundation), Phase 1 (plugin models, discovery and metadata) and Phase 2 (text output parser) are complete. Approval, execution and the system tray are planned for later phases. See [docs/roadmap.md](docs/roadmap.md).
+> **Status: early development.** Phase 0 (project foundation), Phase 1 (plugin models, discovery and metadata), Phase 2 (text output parser) and Phase 3 (plugin trust and approval) are complete. Execution and the system tray are planned for later phases. See [docs/roadmap.md](docs/roadmap.md).
 
 ## What exists today
 
@@ -16,7 +16,7 @@ TrayWisp takes ideas from SwiftBar, xbar, Crossbar, YASB and Zebar. It is an ind
 | Desktop application (WPF) | Implemented: an informational window only, no tray icon |
 | Plugin models, discovery and metadata | Implemented (library only): `name.interval.ext` file names, language classification, SwiftBar/xbar-compatible metadata tags, read-only recursive discovery. See [docs/plugin-format.md](docs/plugin-format.md). Not yet exposed in the CLI or desktop app. |
 | SwiftBar/xbar-compatible text output parser | Implemented (library only): header titles, nested menus and separators, formatting parameters, and URL, command and refresh actions parsed into inert data, with strict quoting, limits and diagnostics. A documented subset, not full compatibility. See [docs/output-protocol.md](docs/output-protocol.md). Not yet connected to execution or any display. |
-| Plugin trust and approval | Planned (Phase 3) |
+| Plugin trust and approval | Implemented (library only): explicit approval of a reviewed SHA-256 fingerprint of the whole file, bound to the plugin root and identity; one authoritative trust check that rehashes the file every time and invalidates approvals when content changes; stale-approval detection for future output actions; strict path validation (no links, aliases, network or hidden paths); a versioned, locked, atomically replaced JSON store in `%LOCALAPPDATA%\TrayWisp\trust`. See [docs/trust-model.md](docs/trust-model.md). Not yet exposed in the CLI or desktop app, and nothing runs plugins yet. |
 | Script execution, scheduling and hot reload | Planned (Phases 4–5) |
 | CLI plugin commands and diagnostics | Planned (Phase 6) |
 | Native system tray, plugin management interface, customizable status bar | Planned (Phases 7–9) |
@@ -31,7 +31,7 @@ TrayWisp takes ideas from SwiftBar, xbar, Crossbar, YASB and Zebar. It is an ind
 - **Native Windows surfaces.** System tray icons and menus, a customizable status bar for persistent text, and a plugin management interface.
 - **Diagnostics built in.** Each run will be inspectable from the CLI and the plugin management interface.
 
-Plugins will run as ordinary processes with your user account's privileges. Approving a plugin records your consent to run it. **It is not a sandbox**, and TrayWisp does not promise complete containment of plugin processes. See [docs/security.md](docs/security.md).
+Plugins will run as ordinary processes with your user account's privileges. Approving a plugin records your consent to run exactly that content. **It is not a sandbox**, and TrayWisp does not promise complete containment of plugin processes. See [docs/security.md](docs/security.md).
 
 ## Requirements
 
@@ -72,8 +72,8 @@ A plugin is a script whose file name follows `name[.interval].extension`, for ex
 
 ```text
 src/
-  TrayWisp.Core/       Platform-independent plugin models, file-name, metadata and output parsers
-  TrayWisp.Runtime/    Plugin discovery (implemented); execution and scheduling (planned)
+  TrayWisp.Core/       Platform-independent plugin models, file-name, metadata and output parsers, trust models
+  TrayWisp.Runtime/    Plugin discovery and trust (implemented); execution and scheduling (planned)
   TrayWisp.Cli/        Command-line application (traywisp.exe)
   TrayWisp.Desktop/    WPF desktop application (TrayWisp.Desktop.exe)
 tests/
@@ -85,8 +85,9 @@ docs/
   architecture.md      Projects, dependency rules, platform constraints
   plugin-format.md     File names, metadata, discovery, diagnostics, compatibility
   output-protocol.md   Plugin output text format, actions, limits, compatibility
+  trust-model.md       Plugin approval, fingerprints, trust checks, approval store
   roadmap.md           Phased plan
-  security.md          Plugin trust model, discovery limits and planned execution safeguards
+  security.md          Security model, discovery, output and approval safeguards, planned execution safeguards
 ```
 
 ## Documentation
@@ -94,6 +95,7 @@ docs/
 - [Architecture](docs/architecture.md)
 - [Plugin format](docs/plugin-format.md)
 - [Output protocol](docs/output-protocol.md)
+- [Trust model](docs/trust-model.md)
 - [Roadmap](docs/roadmap.md)
 - [Security model](docs/security.md)
 - [Contributing](CONTRIBUTING.md)
