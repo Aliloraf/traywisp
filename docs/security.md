@@ -1,6 +1,6 @@
 # Security model
 
-TrayWisp's core job is to run scripts on your behalf, so its security model has to be stated plainly. This document describes the trust model and the safeguards **planned** for plugin execution. **As of Phase 0, TrayWisp does not discover or execute plugins.** None of the controls below are implemented yet. They are design commitments that later phases (see [roadmap.md](roadmap.md)) must meet or explicitly revise.
+TrayWisp's core job is to run scripts on your behalf, so its security model has to be stated plainly. This document describes the trust model, the plugin discovery safeguards that are **implemented**, and the safeguards **planned** for plugin execution. **As of Phase 1, TrayWisp discovers plugin files and reads their metadata, but it does not execute plugins.** Apart from [Plugin discovery](#plugin-discovery-implemented), none of the controls below are implemented yet. They are design commitments that later phases (see [roadmap.md](roadmap.md)) must meet or explicitly revise.
 
 To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 
@@ -29,12 +29,35 @@ TrayWisp does **not**:
 - Guarantee that every process a plugin starts is terminated (see [Process-tree termination](#process-tree-termination)).
 - Undo anything a plugin has already done.
 
+## Plugin discovery (implemented)
+
+Discovery (Phase 1, specified in [plugin-format.md](plugin-format.md#discovery)) treats the plugin directory and everything in it as untrusted input:
+
+- **No execution.** Discovery never starts a process or interpreter, never evaluates script content, and never resolves interpreters. A discovered plugin is neither approved nor runnable.
+- **Read-only.** Candidate files are opened for reading only, with sharing that does not block other programs. Nothing is created, written, deleted, renamed, locked exclusively or re-permissioned. A test checks hashes, timestamps and attributes before and after discovery.
+- **Bounded.** At most 64 KiB + 1 byte is read per file. Directory depth (8), entries enumerated (10,000, one budget for the whole scan, charged at listing time) and candidates (500) are capped by default. Metadata parsing caps tag count (128), value length (1,024) and tag-name length (64), and uses neither regular expressions nor an XML parser.
+- **Inert metadata.** Metadata is read only from comment-shaped lines, in the comment syntax of the plugin's language, so ordinary code lines cannot supply it. The parser is line-based, not a tokenizer: a comment-shaped line inside a multi-line string literal can supply tags. Metadata is therefore untrusted descriptive text. It never establishes identity or approval. Values are opaque text: no entity expansion, no DTDs, no URL fetching or validation, no control characters.
+- **Safe diagnostics.** Messages never repeat metadata values. File names, paths and system messages in them are length-limited, invisible or reordering characters are escaped, and literal backslashes are doubled so they cannot imitate escapes. `PluginDiagnostic.ToString()` escapes and bounds the raw `Path` the same way.
+- **No link following.** Symbolic links, junctions and other reparse points are skipped, and a root that is itself a reparse point is refused. Each directory and file is re-checked immediately before it is listed or opened, and is skipped if it has turned into a link, a remote-storage entry or a different kind of entry. It is checked again after it is listed or read, and the result is discarded on the same conditions.
+- **No remote fetches.** Entries marked offline or recall-on-access (cloud placeholders, hierarchical storage) are not read, and a root marked this way is not listed, because doing so could trigger a download.
+- **No ambiguous identities.** Plugin files or directories whose names differ only by case are all excluded before anything is read. A locked or broken twin therefore cannot let the other one be selected. A directory whose listing was cut off by the entry budget contributes nothing, because an unseen entry could be a case variant.
+- **No spoofed names.** File and directory names containing Unicode bidirectional controls, which can disguise an extension, are rejected.
+- **Failure isolation.** Unreadable, locked, vanished or malformed files produce diagnostics and do not stop discovery of other plugins. A scan in which a plugin's state could not be determined is marked incomplete.
+- **No arbitrary executables.** Only `.ps1`, `.py`, `.js`, `.sh`, `.bat` and `.cmd` files are candidates. `.exe` and other binaries are ignored.
+
+Limitations. These checks are **not a complete security boundary**:
+
+- **Races.** The pre-use and post-use re-checks narrow, but do not eliminate, link-swap races (TOCTOU). They are path-based: an entry swapped for a link just after the pre-use check and back before the post-use check, or a parent directory replaced by a junction during the scan, can make discovery read up to 64 KiB of a file outside the root. Closing this fully needs handle-relative opens, which .NET does not provide. Nothing is executed or written as a result. See [plugin-format.md](plugin-format.md#security-limitations).
+- **Ancestors and hard links.** Only the root itself is checked for being a reparse point, not its parent directories. Hard links to files elsewhere on the volume cannot be distinguished from ordinary files.
+- **Lookalike names.** Identity comparison approximates NTFS case-insensitivity. Homoglyphs and zero-width characters in file names, and format characters in metadata values, are not filtered. Display surfaces must account for them.
+- **Incomplete scans.** A plugin missing from an incomplete scan may still exist. Later phases must not treat that absence as removal, for example by revoking approval or dropping a schedule.
+
 ## Planned safeguards
 
 ### Explicit approval
 
 - Newly discovered plugins start in a *pending* state and do not run.
-- Approval is bound to the plugin's path and a SHA-256 hash of its contents. If the file changes, approval lapses and the plugin stops running until you approve it again.
+- Approval is bound to the normalized **plugin root**, the plugin's **identity** (its root-relative path, see [plugin-format.md](plugin-format.md#identity)) and a SHA-256 hash of its contents. The identity alone is not enough: the same relative path under another root is a different file. If the file changes, approval lapses and the plugin stops running until you approve it again.
 - **Time-of-check/time-of-use (TOCTOU).** TrayWisp checks the hash, but the interpreter later opens and reads the file by path on its own. Between the check and the read, anything that can write to the plugin file or to the directories on its path can change the contents, or redirect the path with a symbolic link or junction. Planned mitigations are to re-verify immediately before every launch and to resolve the path to its final target. These narrow the window but do **not** eliminate it. Read an approval as "this content was trusted when it was checked", not as a guarantee that exactly this content runs.
 - **Scope of the hash.** It covers only the plugin file. It does not cover modules the script imports, files it reads, the interpreter, or anything the script downloads. An approved script can still change its behaviour through any of those.
 - In practice, anyone who can write to your plugin directory can usually run code as you anyway, so these risks matter most when that directory's permissions are weaker than expected (see [Plugin directory](#plugin-directory)).
@@ -59,7 +82,7 @@ These are two different things, and TrayWisp will only do the first:
 
 Caveats:
 
-- On Windows, a process receives one command-line string. .NET serializes the argument list using the standard quoting conventions, and the target program parses it again. Programs that follow the standard Microsoft C/C++ parsing rules receive the intended arguments. `cmd.exe` and batch files (`.cmd`, `.bat`) parse differently, so explicit arguments do not give them the same protection. Whether batch-file plugins are supported, and how, is undecided.
+- On Windows, a process receives one command-line string. .NET serializes the argument list using the standard quoting conventions, and the target program parses it again. Programs that follow the standard Microsoft C/C++ parsing rules receive the intended arguments. `cmd.exe` and batch files (`.cmd`, `.bat`) parse differently, so explicit arguments do not give them the same protection. Discovery recognizes batch files, but their execution support is deferred and undecided.
 - The interpreter executes the script itself. That is the plugin's code, covered by the trust model above, not a shell-injection issue.
 
 Further rules:
