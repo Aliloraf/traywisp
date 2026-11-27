@@ -215,10 +215,18 @@ public sealed class RealInterpreterTests : IDisposable
     // restrictive policy is set in the child's base environment, not taken from the machine, and nothing persistent
     // is changed. The control run, with the unchanged environment, shows what the other scopes allow; when it
     // succeeds, it also shows that TrayWisp added no policy override of its own.
+    //
+    // The script imports Get-ExecutionPolicy's module from the interpreter's own $PSHOME instead of relying on module
+    // autoloading: a PSModulePath inherited from PowerShell 7 through an intermediate process (as in CI, where the
+    // test step runs under pwsh) lists PowerShell 7's modules first, and Windows PowerShell 5.1 then fails to autoload
+    // PowerShell 7's Microsoft.PowerShell.Security (see docs/execution-engine.md, "Tests"). Any failed command stops
+    // the script with a nonzero exit, so a broken control run cannot pass for a successful one.
     private async Task AssertRestrictiveProcessPolicyIsPreservedAsync(string interpreter, string name)
     {
         string marker = _env.MarkerPath("policy-" + name);
-        string script = $"New-Item -ItemType File -Path '{marker.Replace("'", "''", StringComparison.Ordinal)}' | Out-Null\n"
+        string script = "$ErrorActionPreference = 'Stop'\n"
+            + "Import-Module -Name (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop\n"
+            + $"New-Item -ItemType File -Path '{marker.Replace("'", "''", StringComparison.Ordinal)}' | Out-Null\n"
             + "Write-Output ('policy:' + (Get-ExecutionPolicy))\n";
         _env.Trust.Write("policy.ps1", script);
         _env.Trust.Approve(_env.TrustService, "policy.ps1");
@@ -227,6 +235,10 @@ public sealed class RealInterpreterTests : IDisposable
         PluginExecutionResult control = await _env.RunAsync(_env.Service(options), "policy.ps1", TimeSpan.FromSeconds(60));
         if (control.Status == PluginExecutionStatus.Succeeded)
         {
+            Assert.True(
+                control.StandardError.Length == 0 && control.Output!.Titles.Length == 1,
+                $"The control run must print exactly one title and nothing on standard error. Exit {control.ExitCode}, "
+                + $"titles [{string.Join(" | ", control.Output?.Titles.Select(title => title.Item.Text) ?? [])}], stderr: {control.StandardError}");
             string effective = Assert.Single(control.Output!.Titles).Item.Text;
             Assert.StartsWith("policy:", effective, StringComparison.Ordinal);
             Assert.Equal(PolicyOf(Environment.GetEnvironmentVariable("PSExecutionPolicyPreference")) ?? effective, effective, ignoreCase: true);
