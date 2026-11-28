@@ -1,6 +1,6 @@
 # Security model
 
-TrayWisp's core job is to run scripts on your behalf, so its security model has to be stated plainly. This document describes the trust model, the discovery, output parsing, approval and execution safeguards that are **implemented**, and the safeguards that are still **planned**. **As of Phase 4, TrayWisp discovers plugin files, reads their metadata, parses plugin output text, records explicit approvals with an authoritative trust check, and has an execution engine that runs an approved plugin under that check. The engine is not exposed through the CLI or the desktop app yet, and TrayWisp never acts on plugin output.** [Plugin discovery](#plugin-discovery-implemented), [Output parsing](#output-parsing-implemented), [Plugin approval](#plugin-approval-implemented) and [Plugin execution](#plugin-execution-implemented) describe implemented controls. Everything under [Planned safeguards](#planned-safeguards) is not implemented yet. They are design commitments that later phases (see [roadmap.md](roadmap.md)) must meet or explicitly revise.
+TrayWisp's core job is to run scripts on your behalf, so its security model has to be stated plainly. This document describes the trust model, the discovery, output parsing, approval and execution safeguards that are **implemented**, and the safeguards that are still **planned**. **As of Phase 5, TrayWisp discovers plugin files, reads their metadata, parses plugin output text, records explicit approvals with an authoritative trust check, has an execution engine that runs an approved plugin under that check, and has a scheduler that refreshes approved plugins through that engine and reacts to changes. Neither is exposed through the CLI or the desktop app yet, and TrayWisp never acts on plugin output.** [Plugin discovery](#plugin-discovery-implemented), [Output parsing](#output-parsing-implemented), [Plugin approval](#plugin-approval-implemented), [Plugin execution](#plugin-execution-implemented) and [Scheduling and hot reload](#scheduling-and-hot-reload-implemented) describe implemented controls. Everything under [Planned safeguards](#planned-safeguards) is not implemented yet. They are design commitments that later phases (see [roadmap.md](roadmap.md)) must meet or explicitly revise.
 
 To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 
@@ -50,7 +50,7 @@ Limitations. These checks are **not a complete security boundary**:
 - **Races.** The pre-use and post-use re-checks narrow, but do not eliminate, link-swap races (TOCTOU). They are path-based: an entry swapped for a link just after the pre-use check and back before the post-use check, or a parent directory replaced by a junction during the scan, can make discovery read up to 64 KiB of a file outside the root. Closing this fully needs handle-relative opens, which .NET does not provide. Nothing is executed or written as a result. See [plugin-format.md](plugin-format.md#security-limitations).
 - **Ancestors and hard links.** Only the root itself is checked for being a reparse point, not its parent directories. Hard links to files elsewhere on the volume cannot be distinguished from ordinary files.
 - **Lookalike names.** Identity comparison approximates NTFS case-insensitivity. Homoglyphs and zero-width characters in file names, and format characters in metadata values, are not filtered. Display surfaces must account for them.
-- **Incomplete scans.** A plugin missing from an incomplete scan may still exist. Later phases must not treat that absence as removal, for example by revoking approval or dropping a schedule.
+- **Incomplete scans.** A plugin missing from an incomplete scan may still exist. The scheduler (Phase 5) keeps such a plugin as *uncertain* instead of removing it, and nothing ever revokes an approval because of absence (see [Scheduling and hot reload](#scheduling-and-hot-reload-implemented)).
 
 ## Output parsing (implemented)
 
@@ -97,7 +97,7 @@ Limitations (details in [trust-model.md](trust-model.md#security-guarantees-and-
 
 ## Plugin execution (implemented)
 
-The execution engine (Phase 4, specified in [execution-engine.md](execution-engine.md)) is the only code that starts plugins. It is a library: no CLI command, scheduler or tray calls it yet.
+The execution engine (Phase 4, specified in [execution-engine.md](execution-engine.md)) is the only code that starts plugins. It is a library: the scheduler (Phase 5) calls it; no CLI command or tray does yet.
 
 ### Trust checks on every execution path
 
@@ -106,7 +106,7 @@ The execution engine (Phase 4, specified in [execution-engine.md](execution-engi
 - The internal process runner requires the lease that only an approved check produces. No public member exposes processes, start information, command lines or interpreter arguments. There are no overrides or force-run flags.
 - The engine uses the host's long-lived `PluginTrustService`, so unsaved invalidations keep being enforced.
 
-*Planned:* scheduled runs, hot reload, manual runs from the tray or management interface and CLI runs must all go through this engine (Phases 5 to 8). Output-driven actions must be checked with `CheckTrust(approvalIdentity)` when activated. If an override is ever added, for example a one-off CLI run of an unapproved plugin, it must be an explicit per-invocation user action and be recorded in diagnostics. Disabling or revoking a plugin must cancel its in-flight runs; the engine supports cancellation, the host must request it.
+Scheduled runs and hot reload (Phase 5) go through this engine, with the approval generation each run was selected under (see [Scheduling and hot reload](#scheduling-and-hot-reload-implemented)). *Planned:* manual runs from the tray or management interface and CLI runs must go through it as well (Phases 6 to 8). Output-driven actions must be checked with `CheckTrust(approvalIdentity)` when activated. If an override is ever added, for example a one-off CLI run of an unapproved plugin, it must be an explicit per-invocation user action and be recorded in diagnostics. Disabling or revoking a plugin must cancel its in-flight runs; the engine supports cancellation, the host must request it.
 
 ### Process launch: explicit arguments, not shell command strings
 
@@ -146,7 +146,7 @@ Further rules:
 ### Cancellation
 
 - Runs accept a cancellation token. Cancellation before the launch prevents it; afterwards, it terminates the run. A cancellation that arrives while the process is being created cannot stop the creation, so the process is then terminated at once.
-- *Planned:* runs are cancelled when a plugin is disabled, revoked, removed or modified, and when TrayWisp exits; the same plugin never has overlapping runs, and a global concurrency limit bounds the number of runs (Phase 5).
+- The scheduler (Phase 5) requests cancellation of a run when its plugin is disabled, revoked, reapproved, removed or changed, and when the scheduler stops; the same plugin never has overlapping runs, and a global concurrency limit (default 4) bounds the number of runs. Requested cancellation is not completion: a run keeps its slot until the engine has ended it.
 
 ### Process-tree termination
 
@@ -175,6 +175,22 @@ During a run, the checked plugin file and the directories on its path inside the
 - Each result records the start time, monotonic duration, exit code, termination reason, capture and truncation state, cleanup outcome, the resolved interpreter and a bounded, sanitized stderr tail, with stable codes `TW600`–`TW699` next to the unchanged trust and parser diagnostics.
 - Diagnostics never contain environment variable values, credentials, script content, stdout or arbitrary exception messages. The stderr tail can contain whatever a plugin prints, including sensitive data; treat it like the plugin's own output.
 - Phase 4 keeps diagnostics in memory and returns them. Nothing is logged, stored or sent.
+
+## Scheduling and hot reload (implemented)
+
+The scheduler (Phase 5, specified in [scheduling.md](scheduling.md)) decides only *when* the engine is asked to run a plugin. It adds no execution path of its own:
+
+- **No new authorization.** Every launch goes through the engine's launch-time trust check and lease. The scheduler's own trust observations (including a cached `Approved`) decide only whether it asks; they never authorize. Every trust check uses the engine's own long-lived trust service, so a scheduler cannot check one store and launch through another, and unsaved invalidations stay effective.
+- **Approval generations.** A run is launched only if the current approval is exactly the one it was selected under; a revocation and reapproval in between (even of the same bytes) makes the launch-time check deny it.
+- **Publication.** Output is published only for a successful, still-current run after a fresh `CheckTrust` of its approval identity, committed atomically with the check that no invalidation (revocation, reapproval, content change, disabling, removal, uncertainty, shutdown) superseded the run. A failed run, an unavailable store or any trust denial withdraws earlier output; while a plugin's presence, its root or its trust is unresolved (incomplete scan, root unavailable or replaced), its output is withheld until a fresh check confirms it. Actions stay inert, and activating one later still needs `CheckTrust(approval)`.
+- **Stale results.** Late completions of cancelled or superseded runs cannot publish, restore, re-enable, reschedule or unblock anything; a run superseded before the engine was called starts nothing. Trust observations are versioned per plugin, so an approval observed before a newer denial was applied can never restore eligibility.
+- **Absence is not removal.** Only a complete scan removes a plugin; approvals are never revoked or pruned because a plugin is missing, unsafe or inaccessible, or because the root became unavailable or was replaced (those suspend plugins and cancel their runs; the trust service's check decides). A renamed plugin is a new plugin without the old approval or output.
+- **Hints, not facts.** File system notifications only trigger debounced rescans and trust checks; names they report are never opened, launched or trusted. Metadata, timestamps, sizes and notifications never prove that content is unchanged or approved; only the fingerprint does.
+- **Incomplete cleanup.** A plugin whose run's process cleanup could not be confirmed is never launched again by that scheduler instance (whatever happens to its approval, enabled state or presence), and each such incident permanently reserves one execution slot. If an incident cannot be recorded, the scheduler launches nothing more. This protection is in memory: a restarted TrayWisp cannot prove those processes ended, so an operator must check.
+- **Bounded.** Concurrency, tracked plugins (500), cleanup incidents, watcher hints, diagnostics, run summaries, retained output (32 MiB estimated) and the shutdown wait are bounded; there is no unbounded queue, no task per plugin or notification, and no polling.
+- **Within one instance.** The no-overlap and concurrency guarantees hold for one scheduler instance; hosts create one per plugin root.
+
+Limitations: changes made by other processes to the trust store, and changes a watcher missed, are found by periodic reconciliation (30 s by default), not instantly; a run already authorized keeps running until its cancellation takes effect; and the Phase 4 limits (time-of-check windows, post-start job assignment) are unchanged. See [scheduling.md](scheduling.md#remaining-limitations).
 
 ## Planned safeguards
 

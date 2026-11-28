@@ -2,7 +2,7 @@
 
 This document specifies plugin trust and approval: how TrayWisp identifies a plugin for approval, fingerprints its content, records explicit approvals, invalidates them, and decides whether a plugin may run.
 
-**Status (Phase 3, used by Phase 4).** Everything in this document is **implemented and tested**, except where a section says *planned*. The execution engine ([execution-engine.md](execution-engine.md)) calls the authoritative check immediately before every launch. Later phases must use it as described in [Integration obligations](#integration-obligations-for-later-phases).
+**Status (Phase 3, used by Phases 4 and 5).** Everything in this document is **implemented and tested**, except where a section says *planned*. The execution engine ([execution-engine.md](execution-engine.md)) calls the authoritative check immediately before every launch, and the scheduler ([scheduling.md](scheduling.md)) uses the same trust service for its own checks. Later phases must use it as described in [Integration obligations](#integration-obligations-for-later-phases).
 
 **Approval is consent, not sandboxing.** An approved plugin runs with all of your user account's access. Approval only records that you chose to trust exactly this content at this location. See [security.md](security.md#trust-model).
 
@@ -87,6 +87,8 @@ It matters in case-sensitive directories inside the root. There, the case-insens
 ### Execution lease
 
 *Implemented in Phase 4.* `PluginTrustService.CheckTrustForExecution(root, id)` is internal to Runtime and used only by the execution engine. It runs the same `CheckCore` as `CheckTrust(root, id)`, with the same store lock, store read, unsaved-invalidation handling, inspection, policy and invalidation. Only for an `Approved` decision, the open inspection (the plugin file, opened for reading with read-only sharing, and the root and each directory inside it on the path, opened without delete sharing) is transferred to a `PluginExecutionLease` instead of being closed. Every other outcome closes it as before. The store lock is released before the method returns.
+
+*Phase 5:* an overload `CheckTrustForExecution(root, id, expectedApproval, …)`, also internal, makes the identical check and additionally applies the condition of `CheckTrust(approvalIdentity)`: the current approval must be exactly `expectedApproval` (same key, fingerprint and generation), otherwise `StaleApproval` (or `ContentChanged`, with invalidation), and no lease. An expected identity of another key is denied without being compared. The scheduler uses it so that a run selected under one approval generation can never launch under another (see [scheduling.md](scheduling.md#expected-approval-generations)).
 
 The lease exposes the decision, its approval identity and its validated path. The engine disposes it when the run ends, on every path. While it is held, the plugin file cannot be written, replaced, renamed or deleted, and the directories cannot be renamed or deleted; it can still be read, and other trust operations proceed. It does not cover memory-mapped writers, imported modules, the interpreter or ancestors of the root. Public APIs and their semantics are unchanged. See [execution-engine.md](execution-engine.md#authorization-lease).
 
@@ -245,7 +247,7 @@ It is bounded by `MaxApprovals` (4,096). Because generations the store no longer
 
 **Not a content change.** A missing, locked, unreadable, oversized or changing file, an unsafe path, an unavailable store, or a cancelled check denies the plugin at that moment and changes nothing.
 
-**Incomplete discovery.** Trust operations never consult discovery results. A plugin missing from an incomplete (or complete) discovery result keeps its approval. Phase 3 has no automatic pruning of records. Removal reconciliation and hot reload belong to Phase 5.
+**Incomplete discovery.** Trust operations never consult discovery results. A plugin missing from an incomplete (or complete) discovery result keeps its approval. There is no automatic pruning of records: the Phase 5 scheduler forgets a plugin removed by a complete scan, but never touches its approval.
 
 **Observed versus unobserved changes.** Only changes that a check observes invalidate an approval. If a file is changed and changed back between two checks, no check sees the difference, and the approval stands, because the bytes are again the approved bytes. The execution engine checks immediately before every launch to keep this window small.
 
@@ -429,9 +431,9 @@ Windows-specific behaviour is tested against real temporary directories and isol
 
 ## Integration obligations for later phases
 
-Phase 4 implemented the first obligation below (see [execution-engine.md](execution-engine.md#authorization)); the others are *planned, not implemented*. Later phases must:
+Phase 4 implemented the first obligation below (see [execution-engine.md](execution-engine.md#authorization)) and Phase 5 the scheduling obligation (see [scheduling.md](scheduling.md)); the others are *planned, not implemented*. Later phases must:
 
 - **Phase 4 (execution), implemented.** Call `CheckTrust` immediately before every launch, on every path: scheduled, manual, CLI and output-driven. Launch only when it returns `Approved`, and launch **exactly the `ValidatedFilePath` of that immediate check**. Never reconstruct a launch path from the root and the case-insensitive identity, from an approval identity, or from an earlier discovery descriptor or decision. Use one long-lived `PluginTrustService` per store for all authoritative checks, so that [unsaved invalidations](#unsaved-invalidations) keep being enforced and retried. Never cache a decision, never treat a fingerprint, a discovery result or an earlier decision as authorization, and add no bypass. If a one-off override is ever added, it must be an explicit per-invocation user action recorded in diagnostics (see [security.md](security.md#trust-checks-on-every-execution-path)). Associate each run's output with the decision's `Approval` identity. Narrow the TOCTOU window further where practical, and document what remains. Hosts satisfy this by running plugins only through `PluginExecutionService.RunAsync`.
 - **Phase 4/7 (output-driven actions).** When an action is activated, call `CheckTrust(approvalIdentity)` with the identity of the run that produced the output, and act only on `Approved`. A `StaleApproval` disables the action.
-- **Phase 5 (scheduling and hot reload).** Cancel in-flight runs when a check denies a plugin. Never revoke or prune an approval because a plugin is missing from an incomplete discovery result. Any reconciliation of records for removed plugins must use complete results only and must be designed explicitly.
+- **Phase 5 (scheduling and hot reload), implemented.** Cancel in-flight runs when a check denies a plugin (any observation other than the same approval invalidates the plugin's state and requests cancellation). Never revoke or prune an approval because a plugin is missing from an incomplete discovery result (the scheduler never revokes or prunes approvals at all; a plugin missing from an incomplete scan is kept as uncertain). Use the host's single trust service for every check (the scheduler uses the execution service's). After a host approves or revokes, it calls `PluginScheduler.NotifyTrustChanged`.
 - **Phases 6 and 8 (CLI and UI).** Present `Inspect` results for review, preferably with the content itself, and pass the reviewed fingerprint to `Approve`. Show diagnostics escaped. Explain that approval is consent, not sandboxing.

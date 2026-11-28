@@ -9,7 +9,7 @@ This roadmap is **tentative**. Scope and order beyond the current phase may chan
 | 2 | SwiftBar/xbar-compatible text output parser | **Complete** |
 | 3 | Plugin trust and approval | **Complete** |
 | 4 | Script execution engine | **Complete** |
-| 5 | Scheduling and hot reload | Planned |
+| 5 | Scheduling and hot reload | **Complete** |
 | 6 | CLI and plugin diagnostics | Planned |
 | 7 | Native Windows system tray | Planned |
 | 8 | Plugin management interface | Planned |
@@ -88,11 +88,22 @@ Specified in [execution-engine.md](execution-engine.md).
 
 Not in Phase 4: scheduling, overlapping-run prevention, concurrency limits, hot reload, file watching, retries, execution history, execution of output actions, CLI commands, UI, race-free job assignment through a native launcher, sandboxing.
 
-## Phase 5: Scheduling and hot reload
+## Phase 5: Scheduling and hot reload (complete)
 
-- Interval scheduling with no overlapping runs of the same plugin and a global concurrency limit.
-- Hot reload: plugin files that are added, changed or removed are detected. In-flight runs of changed or removed plugins are cancelled. Changed plugins lose approval until you approve them again (the trust check already invalidates approvals when it observes a change).
-- A plugin counts as removed only when it is absent from a **complete** discovery result (`PluginDiscoveryResult.IsComplete`). Absence from an incomplete scan, for example while a file is briefly locked, is not removal.
+Specified in [scheduling.md](scheduling.md).
+
+- Runtime: `PluginScheduler`, one long-lived scheduler per plugin root, built from the host's execution service and making every trust check with that service's own trust service. Single-use lifecycle (`StartAsync`, `StopAsync`, `DisposeAsync`), manual refresh with accepted, coalesced and rejected results, rescans, trust-change notifications and in-memory enabling and disabling.
+- Core: pure scheduling policy (fixed-delay intervals from the file name, no catch-up, failure backoff of 5 s doubling to 60 s and never shorter than the interval, a 250 ms minimum relaunch delay, eligibility precedence, derived display status, retained-output cost), state dimensions and diagnostics `TW700`–`TW799`.
+- Immutable snapshots with monotonic revisions and coalesced change notification (`WaitForChangeAsync`), separating eligibility, activity and presence; bounded latest-run summaries without output; publishable output only in `ScheduledPlugin.Output`, with its approval identity.
+- A global concurrency limit (default 4, 1–16) counted from dispatch to the end of cleanup and the output check, one attempt per plugin identity (also across removal and reappearance), and fairness by readiness time.
+- Reconciliation with the unchanged discovery: root validation in a safe order (drive type, directory chain, short names), removal only after a complete scan, uncertain plugins kept (and their output withheld until a fresh check) after incomplete scans, every plugin suspended and its run cancelled when the root is unavailable or replaced, renames as new identities, case-only renames kept, descriptor changes treated as hints of content changes and decided by the trust service, bounded tracking (500) and a replaced-root check.
+- A debounced recursive `FileSystemWatcher` (250 ms quiet, at most 1 s), periodic full reconciliation (30 s), overflow and failure recovery, storms bounded, auxiliary file writes ignored.
+- Trust integration: launches only through the engine, with an internal expected-approval variant of the launch-time check so a run selected under one approval generation cannot launch under another; output published only after a fresh `CheckTrust(result.Approval)` and an atomic revision check; invalidation and cancellation after revocation, reapproval, content change, disabling, removal and shutdown; stale results rejected.
+- Incomplete-cleanup protection: a permanent per-instance block, one reserved slot per incident, fail-closed registry.
+- Bounded shutdown shared by concurrent callers, with an accurate incomplete result that includes teardown and cancellation delivery; faults observable and fail-closed, also in completion, finalization, cancellation callbacks and disposal; trust observations versioned per plugin so a stale approval never restores eligibility.
+- Deterministic tests on fake operations with a manual clock, real Windows integration tests with the helper interpreter and the real watcher, and repeated runs to detect races.
+
+Not in Phase 5: CLI commands, Desktop, tray or status bar integration, persistent plugin settings, execution of output actions, automatic approval, process enumeration, native launcher, sandboxing.
 
 ## Phase 6: CLI and plugin diagnostics
 

@@ -102,10 +102,27 @@ public sealed class PluginExecutionService
         ArgumentNullException.ThrowIfNull(pluginId);
         TimeSpan timeout = (runOptions ?? PluginRunOptions.Default).Timeout ?? _defaultTimeout;
         ValidateTimeout(timeout, nameof(runOptions));
-        return RunCoreAsync(rootPath, pluginId, timeout, cancellationToken);
+        return RunCoreAsync(rootPath, pluginId, timeout, expectedApproval: null, cancellationToken);
     }
 
-    private async Task<PluginExecutionResult> RunCoreAsync(string rootPath, PluginId pluginId, TimeSpan timeout, CancellationToken cancellationToken)
+    // The trust service every run of this instance is authorized with. The scheduler makes its own trust checks with it,
+    // so that scheduling decisions and launches can never use two different trust stores or service instances.
+    internal PluginTrustService TrustService => _trust;
+
+    // RunAsync for a launch selected under a known approval: the launch-time check (unchanged otherwise) additionally
+    // requires the current approval to be exactly expectedApproval, so a run selected under one approval generation is
+    // never launched under another. Used by the scheduler; not a reusable authorization, and no weaker than RunAsync.
+    internal Task<PluginExecutionResult> RunAsync(string rootPath, PluginId pluginId, PluginRunOptions? runOptions, PluginApprovalIdentity expectedApproval, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(rootPath);
+        ArgumentNullException.ThrowIfNull(pluginId);
+        ArgumentNullException.ThrowIfNull(expectedApproval);
+        TimeSpan timeout = (runOptions ?? PluginRunOptions.Default).Timeout ?? _defaultTimeout;
+        ValidateTimeout(timeout, nameof(runOptions));
+        return RunCoreAsync(rootPath, pluginId, timeout, expectedApproval, cancellationToken);
+    }
+
+    private async Task<PluginExecutionResult> RunCoreAsync(string rootPath, PluginId pluginId, TimeSpan timeout, PluginApprovalIdentity? expectedApproval, CancellationToken cancellationToken)
     {
         // Leave the caller's thread and synchronization context (for example a UI thread) before any blocking work:
         // interpreter resolution and the trust check, which hashes the plugin file, are synchronous.
@@ -115,7 +132,7 @@ public sealed class PluginExecutionService
         try
         {
             return OperatingSystem.IsWindows()
-                ? await RunOnWindowsAsync(rootPath, pluginId, timeout, details, diagnostics, cancellationToken).ConfigureAwait(false)
+                ? await RunOnWindowsAsync(rootPath, pluginId, timeout, expectedApproval, details, diagnostics, cancellationToken).ConfigureAwait(false)
                 : Fail(PluginExecutionStatus.UnsupportedPlatform, ExecutionDiagnosticCode.UnsupportedPlatform, "Plugin execution is only supported on Windows.");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -144,7 +161,7 @@ public sealed class PluginExecutionService
     }
 
     [SupportedOSPlatform("windows")]
-    private async Task<PluginExecutionResult> RunOnWindowsAsync(string rootPath, PluginId pluginId, TimeSpan timeout, ResultDetails details, ExecutionDiagnosticBag diagnostics, CancellationToken cancellationToken)
+    private async Task<PluginExecutionResult> RunOnWindowsAsync(string rootPath, PluginId pluginId, TimeSpan timeout, PluginApprovalIdentity? expectedApproval, ResultDetails details, ExecutionDiagnosticBag diagnostics, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -187,8 +204,8 @@ public sealed class PluginExecutionService
         cancellationToken.ThrowIfCancellationRequested();
 
         // 3. The authoritative trust check, immediately before the launch. On approval, the inspected file and its
-        // directories stay held for the whole run.
-        PluginTrustDecision decision = _trust.CheckTrustForExecution(rootPath, pluginId, cancellationToken, out PluginExecutionLease? lease);
+        // directories stay held for the whole run. With an expected approval, only exactly that approval authorizes.
+        PluginTrustDecision decision = _trust.CheckTrustForExecution(rootPath, pluginId, expectedApproval, cancellationToken, out PluginExecutionLease? lease);
         details.Lease = lease;
         if (lease is null)
         {

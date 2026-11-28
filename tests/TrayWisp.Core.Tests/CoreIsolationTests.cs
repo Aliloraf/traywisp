@@ -121,6 +121,23 @@ public sealed class CoreIsolationTests
         }
     }
 
+    [Fact]
+    public void CoreSchedulingTypesArePureModels()
+    {
+        // Scheduling policy and states only: no type owns a timer, task, handle or stream, and none reads a clock (the
+        // member references are covered by the test above).
+        Type[] types = [.. typeof(PluginId).Assembly.GetTypes().Where(type => type.Namespace == "TrayWisp.Core.Scheduling")];
+        Assert.NotEmpty(types);
+        foreach (Type type in types)
+        {
+            Assert.False(typeof(IDisposable).IsAssignableFrom(type), type.FullName);
+            Assert.All(
+                type.GetMembers(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.DeclaredOnly)
+                    .OfType<System.Reflection.MethodInfo>(),
+                method => Assert.False(typeof(Task).IsAssignableFrom(method.ReturnType) || typeof(Stream).IsAssignableFrom(method.ReturnType), $"{type.FullName}.{method.Name}"));
+        }
+    }
+
     private static string FullName(MetadataReader metadata, TypeReferenceHandle handle)
     {
         TypeReference type = metadata.GetTypeReference(handle);

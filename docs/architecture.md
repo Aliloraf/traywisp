@@ -1,13 +1,13 @@
 # Architecture
 
-This document covers how TrayWisp is structured and the rules that hold it together. Each section says whether it describes something **implemented** or **planned**. As of Phase 4, the project structure, build configuration, dependency enforcement, plugin models, metadata parsing, discovery, the text output parser, plugin trust and approval, and the script execution engine are implemented. The execution engine is a library: no host (CLI, scheduler, tray) calls it yet, and nothing displays plugin output.
+This document covers how TrayWisp is structured and the rules that hold it together. Each section says whether it describes something **implemented** or **planned**. As of Phase 5, the project structure, build configuration, dependency enforcement, plugin models, metadata parsing, discovery, the text output parser, plugin trust and approval, the script execution engine, and scheduling with hot reload are implemented. They are libraries: no host (CLI, tray, status bar) uses the scheduler or the engine yet, and nothing displays plugin output.
 
 ## Projects
 
 | Project | Target | Output | Purpose |
 | --- | --- | --- | --- |
 | `TrayWisp.Core` | `net10.0` | Class library | Plugin models, file-name and metadata parsing, text output parsing, trust models and policy, execution statuses, diagnostics and output decoding (implemented). No file system, process, network, clock or environment access. |
-| `TrayWisp.Runtime` | `net10.0` | Class library | Plugin discovery, plugin trust and the approval store, the execution engine (implemented); scheduling (planned). |
+| `TrayWisp.Runtime` | `net10.0` | Class library | Plugin discovery, plugin trust and the approval store, the execution engine, scheduling and hot reload (implemented). |
 | `TrayWisp.Cli` | `net10.0` | `traywisp.exe` | Command-line interface. Implemented: `--help`, `--version`. |
 | `TrayWisp.Desktop` | `net10.0-windows` (WPF) | `TrayWisp.Desktop.exe` | Desktop host. Implemented: an informational window. Planned: system tray, plugin management interface, customizable status bar. |
 | `TrayWisp.Core.Tests` | `net10.0` | xUnit v3 test app | Tests for Core. |
@@ -34,8 +34,8 @@ Enforcement:
 
 1. **Build time.** [`Directory.Build.targets`](../Directory.Build.targets) defines the allowed project references for each production project. Any other `ProjectReference` fails the build with error `TW0001`. To change the architecture, edit that file and this document in the same change.
 2. **Compiled assemblies.** `DependencyRulesTests` in each test project inspects the compiled assembly's references. It catches references added by other means, such as a direct `Reference` to a built DLL.
-3. **Core isolation.** `CoreIsolationTests` reads the metadata of `TrayWisp.Core.dll` and fails if Core references file system types (`File`, `Directory`, `FileStream`, `Path`, …), process types, `Stopwatch`, `TimeProvider`, timers, `DateTime.Now`/`UtcNow`, `Environment.TickCount`, environment variable and folder lookups (`GetEnvironmentVariable`, `ExpandEnvironmentVariables`, `GetFolderPath`, `CurrentDirectory`), network types (`HttpClient`, `Dns`, `Socket`, `WebRequest`, `WebClient`), `System.Drawing.Color`, XML readers or `Regex`. For trust, it also rejects `RandomAccess`, `SafeFileHandle`, `Marshal`, the SHA-256 and incremental hashing types (hashing file content belongs to Runtime) and `Guid.NewGuid` (approval generations are created in Runtime). For execution, it also rejects `SafeProcessHandle`, pipe streams, `Console`, `Environment.SystemDirectory`, `ProcessPath` and `ProcessId`, `Task.Delay` and `Task.Run`, and checks that no type in `TrayWisp.Core.Execution` is disposable or returns a task or stream.
-4. **Execution boundary.** `ExecutionApiTests` checks that `TrayWisp.Runtime.Execution` exports only the documented types, that `RunAsync` is the only public way to run a plugin, that no public Runtime member exposes a `Process`, `ProcessStartInfo` or handle, that result types have no public constructors, and that the authorization lease is internal.
+3. **Core isolation.** `CoreIsolationTests` reads the metadata of `TrayWisp.Core.dll` and fails if Core references file system types (`File`, `Directory`, `FileStream`, `Path`, …), process types, `Stopwatch`, `TimeProvider`, timers, `DateTime.Now`/`UtcNow`, `Environment.TickCount`, environment variable and folder lookups (`GetEnvironmentVariable`, `ExpandEnvironmentVariables`, `GetFolderPath`, `CurrentDirectory`), network types (`HttpClient`, `Dns`, `Socket`, `WebRequest`, `WebClient`), `System.Drawing.Color`, XML readers or `Regex`. For trust, it also rejects `RandomAccess`, `SafeFileHandle`, `Marshal`, the SHA-256 and incremental hashing types (hashing file content belongs to Runtime) and `Guid.NewGuid` (approval generations are created in Runtime). For execution, it also rejects `SafeProcessHandle`, pipe streams, `Console`, `Environment.SystemDirectory`, `ProcessPath` and `ProcessId`, `Task.Delay` and `Task.Run`, and checks that no type in `TrayWisp.Core.Execution` is disposable or returns a task or stream. The same purity check covers `TrayWisp.Core.Scheduling`, whose policy reads no clock: Runtime measures time and passes durations in.
+4. **Execution and scheduling boundaries.** `SchedulerApiTests` checks that `TrayWisp.Runtime.Scheduling` exports only the documented types, that the scheduler is built only from an execution service and a root (no public seam, delegate or trust service parameter), that snapshot types cannot be created or changed outside Runtime, and that publishable output is reachable only through `ScheduledPlugin.Output`. `ExecutionApiTests` checks that `TrayWisp.Runtime.Execution` exports only the documented types, that `RunAsync` is the only public way to run a plugin, that no public Runtime member exposes a `Process`, `ProcessStartInfo` or handle, that result types have no public constructors, and that the authorization lease is internal.
 
 If the CLI later needs to talk to a running desktop instance, the CLI will not reference the desktop project. Any such interaction would go through a protocol defined in Core and implemented by both sides (not designed yet).
 
@@ -196,6 +196,33 @@ Design choices:
 - Why a run ended is decided by `RunArbiter` from monotonic timestamps recorded where each event is observed, so a late supervising continuation cannot change the outcome.
 - No new packages. The six job-object functions and four thread functions are `LibraryImport`s in Runtime.
 
+## Scheduling and hot reload (implemented)
+
+The scheduler, its policies, limits and guarantees are specified in [scheduling.md](scheduling.md). In short:
+
+```text
+Runtime: PluginScheduler(executionService, rootPath, options)       one per root; trust = executionService's trust service
+  ├─ coordinator: one lock over in-memory state (no I/O, no callbacks under it), coalesced pump, one timer,
+  │    immutable snapshots with revisions, WaitForChangeAsync (no consumer code runs on scheduler threads)
+  ├─ reconciliation pass (one at a time): root validation (drive type → directory chain → short names) → watcher
+  │    → PluginDiscovery.Discover → apply (complete: add/update/remove; incomplete: uncertain) → CheckTrust per plugin
+  ├─ FileSystemWatcher: classified hints → debounced rescan (250 ms quiet, ≤ 1 s) + targeted trust checks
+  ├─ attempts (≤ MaxConcurrency, one per plugin identity): RunAsync with the expected approval → output CheckTrust
+  │    → atomic commit if the attempt is still current → publish, or reject and withdraw
+  └─ cleanup registry: unresolved cleanup blocks the identity for the instance's lifetime and holds a slot
+Core: PluginSchedulingPolicy (fixed-delay, backoff, eligibility, status, output cost), states, TW700–TW799
+```
+
+Core types live in `TrayWisp.Core.Scheduling`; Runtime types in `TrayWisp.Runtime.Scheduling`: `PluginScheduler`, `PluginSchedulerOptions` and the snapshot types. Everything else is internal: the operations seam (`SchedulerOperations`, replaced by fakes in tests), the watcher adapter, the coordinator's state, the test hooks, and two small internal extensions of earlier phases: `PluginExecutionService.RunAsync(…, expectedApproval, …)` with `PluginTrustService.CheckTrustForExecution(…, expectedApproval, …)`, so a run selected under one approval generation cannot launch under another, and `PluginExecutionService.TrustService`, so the scheduler checks trust with exactly the engine's trust service. `WindowsFileApi` gained one query (`FILE_ID_INFO`, through the existing `GetFileInformationByHandleEx`) to notice a replaced root.
+
+Design choices:
+
+- Scheduler state never authorizes. Eligibility only decides whether the engine is asked; the engine's launch-time check authorizes each launch, and a fresh `CheckTrust(result.Approval)` precedes each publication.
+- Separate state dimensions (eligibility, activity, presence) with a derived display status, instead of one large state enumeration.
+- Lifecycle revisions per plugin and per-check epochs reject every late or stale result atomically at commit time.
+- Pure decisions (delays, backoff, eligibility precedence, output cost) are in Core and unit-tested without a clock; Runtime owns time (`TimeProvider`, injected internally for tests), timers, the watcher and all I/O.
+- No new packages; no interfaces; deterministic tests use an internal abstract seam and a manual `TimeProvider` written for the tests.
+
 ## Planned component responsibilities
 
 Nothing in this section is implemented. It records the intended direction so that early decisions stay consistent with it. Phase numbers refer to [roadmap.md](roadmap.md).
@@ -206,8 +233,7 @@ Nothing in this section is implemented. It records the intended direction so tha
 
 **Runtime**
 - Calling the trust check, with the producing run's approval identity, before every output-driven action (Phase 7).
-- Scheduling and hot reload: interval-based refresh from `RefreshInterval`, no overlapping runs of the same plugin, a global concurrency limit, and reaction to added, changed or removed plugin files (Phase 5).
-- Bounded, local storage of run diagnostics (Phase 6). Phase 4 returns them in memory only.
+- Bounded, local storage of run diagnostics (Phase 6). Phases 4 and 5 keep them in memory only.
 
 **Desktop**
 - Notification area (system tray) icons with menus rendered from the Core menu model, plus output-driven actions (Phase 7).
@@ -217,7 +243,7 @@ Nothing in this section is implemented. It records the intended direction so tha
 **CLI**
 - Commands to list, validate, approve or revoke, run once and inspect diagnostics (Phase 6).
 
-The CLI and desktop hosts will launch plugins only through `PluginExecutionService`, so no execution path, whether scheduled, manual, CLI or an output-driven action, can bypass the trust check. The [security model](security.md) describes the checks and their limits.
+The CLI and desktop hosts will launch plugins only through `PluginExecutionService` (scheduled and manual refreshes through `PluginScheduler`, which uses it), so no execution path, whether scheduled, manual, CLI or an output-driven action, can bypass the trust check. The [security model](security.md) describes the checks and their limits.
 
 ## Platform constraint: the Windows notification area
 
