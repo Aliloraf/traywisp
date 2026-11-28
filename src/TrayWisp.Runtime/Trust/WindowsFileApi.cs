@@ -44,6 +44,7 @@ internal static partial class WindowsFileApi
 
     private const int FileStandardInfoClass = 1;
     private const int FileAttributeTagInfoClass = 9;
+    private const int FileIdInfoClass = 18;
     private const int FileCaseSensitiveInfoClass = 23;
     private const uint CaseSensitiveDirectoryFlag = 0x1;
 
@@ -179,6 +180,25 @@ internal static partial class WindowsFileApi
     public static bool IsDiskFile(SafeFileHandle handle) => GetFileType(handle) == FileTypeDisk;
 
     /// <summary>
+    /// The identity of the opened file or directory: its volume serial number and 128-bit file identifier
+    /// (FILE_ID_INFO). Two handles with the same identity refer to the same file system object. Used by the scheduler
+    /// to notice that a plugin root was replaced by another directory with the same path.
+    /// </summary>
+    public static bool TryGetFileId(SafeFileHandle handle, out (ulong Volume, ulong Low, ulong High) id, out int error)
+    {
+        if (GetFileInformationByHandleEx(handle, FileIdInfoClass, out FileIdInformation info, (uint)Marshal.SizeOf<FileIdInformation>()))
+        {
+            id = (info.VolumeSerialNumber, info.FileIdLow, info.FileIdHigh);
+            error = 0;
+            return true;
+        }
+
+        id = default;
+        error = Marshal.GetLastPInvokeError();
+        return false;
+    }
+
+    /// <summary>
     /// The normalized final path of an open handle with its drive letter, without the <c>\\?\</c> prefix.
     /// A network path is returned as <c>\\server\share\...</c>.
     /// </summary>
@@ -271,6 +291,11 @@ internal static partial class WindowsFileApi
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool GetFileInformationByHandleEx(SafeFileHandle file, int informationClass, out FileCaseSensitiveInformation information, uint bufferSize);
 
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetFileInformationByHandleEx(SafeFileHandle file, int informationClass, out FileIdInformation information, uint bufferSize);
+
     [LibraryImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", SetLastError = true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static unsafe partial uint GetFinalPathNameByHandle(SafeFileHandle file, char* buffer, uint bufferLength, uint flags);
@@ -305,5 +330,14 @@ internal static partial class WindowsFileApi
     private struct FileCaseSensitiveInformation
     {
         public uint Flags;
+    }
+
+    // FILE_ID_INFO: a 64-bit volume serial number and a 128-bit FILE_ID_128.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileIdInformation
+    {
+        public ulong VolumeSerialNumber;
+        public ulong FileIdLow;
+        public ulong FileIdHigh;
     }
 }

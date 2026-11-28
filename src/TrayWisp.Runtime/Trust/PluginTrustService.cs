@@ -267,7 +267,18 @@ public sealed class PluginTrustService
     /// </summary>
     /// <exception cref="OperationCanceledException">The check was cancelled. A cancelled check never reports approval and retains nothing.</exception>
     [SupportedOSPlatform("windows")]
-    internal PluginTrustDecision CheckTrustForExecution(string rootPath, PluginId pluginId, CancellationToken cancellationToken, out PluginExecutionLease? lease)
+    internal PluginTrustDecision CheckTrustForExecution(string rootPath, PluginId pluginId, CancellationToken cancellationToken, out PluginExecutionLease? lease) =>
+        CheckTrustForExecution(rootPath, pluginId, expectedApproval: null, cancellationToken, out lease);
+
+    /// <summary>
+    /// <see cref="CheckTrustForExecution(string, PluginId, CancellationToken, out PluginExecutionLease?)"/>, and, when
+    /// <paramref name="expectedApproval"/> is given, additionally the condition of
+    /// <see cref="CheckTrust(PluginApprovalIdentity, CancellationToken)"/>: the current approval must be exactly that
+    /// identity (same key, fingerprint and generation). A scheduler that selected a plugin under one approval therefore
+    /// cannot launch it under a newer one. An expected identity of another key is denied as stale, never compared.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    internal PluginTrustDecision CheckTrustForExecution(string rootPath, PluginId pluginId, PluginApprovalIdentity? expectedApproval, CancellationToken cancellationToken, out PluginExecutionLease? lease)
     {
         ArgumentNullException.ThrowIfNull(rootPath);
         ArgumentNullException.ThrowIfNull(pluginId);
@@ -280,7 +291,20 @@ public sealed class PluginTrustService
             return DecisionFailed(failure, key);
         }
 
-        PluginTrustDecision decision = CheckCore(key!, expected: null, retainOnApproval: true, cancellationToken, out InspectedPlugin? retained);
+        if (expectedApproval is not null && expectedApproval.Key != key)
+        {
+            // Never compared with another plugin's approval: the policy requires the same key.
+            return new PluginTrustDecision(
+                PluginTrustStatus.StaleApproval,
+                key,
+                current: null,
+                approval: null,
+                validatedFilePath: null,
+                approvalInvalidated: false,
+                [new TrustDiagnostic(PluginDiagnosticSeverity.Error, TrustDiagnosticCode.StaleApproval, $"The expected approval belongs to another plugin than {Describe(key!)}.")]);
+        }
+
+        PluginTrustDecision decision = CheckCore(key!, expectedApproval, retainOnApproval: true, cancellationToken, out InspectedPlugin? retained);
         if (retained is not null)
         {
             lease = new PluginExecutionLease(decision, retained);

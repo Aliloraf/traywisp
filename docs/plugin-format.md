@@ -2,7 +2,7 @@
 
 This document specifies how TrayWisp recognizes plugin files, parses their file names and embedded metadata, and discovers them in a plugin directory.
 
-**Status (Phase 1).** Everything in this document is **implemented and tested**, except where a section says *planned* or *not implemented*. Discovery never runs plugins. The execution engine (Phase 4, [execution-engine.md](execution-engine.md)) runs approved plugins on request, but nothing schedules refreshes or watches for file changes yet. Plugin output text is specified separately in [output-protocol.md](output-protocol.md), and approval in [trust-model.md](trust-model.md). A discovered plugin is only a description of a file. It is not trusted and not runnable: discovery never approves anything.
+**Status (Phase 1).** Everything in this document is **implemented and tested**, except where a section says *planned* or *not implemented*. Discovery never runs plugins. The execution engine (Phase 4, [execution-engine.md](execution-engine.md)) runs approved plugins, and the scheduler (Phase 5, [scheduling.md](scheduling.md)) refreshes them on their file-name intervals, reruns discovery when files change and reconciles its results. Plugin output text is specified separately in [output-protocol.md](output-protocol.md), and approval in [trust-model.md](trust-model.md). A discovered plugin is only a description of a file. It is not trusted and not runnable: discovery never approves anything.
 
 Code: `TrayWisp.Core/Plugins` (models, file-name and metadata parsers) and `TrayWisp.Runtime/Plugins` (filesystem discovery).
 
@@ -357,7 +357,7 @@ A single broken plugin never prevents discovery of the others:
 - `EntriesInspected`: directory entries enumerated and counted against `MaxEntries`, never more than `MaxEntries`. It includes ignored entries and entries of discarded listings, and excludes the single look-ahead entry.
 - `RootPath` (normalized, without a trailing separator).
 
-**Incomplete results.** A plugin missing from an incomplete result may still exist, for example because it was locked for a moment while an editor saved it. Later phases must **not** treat absence from an incomplete scan as removal: scheduling (Phase 5) must not cancel or forget a plugin on that basis, and approval handling must not discard a record on that basis. Only a complete result shows that a plugin is gone.
+**Incomplete results.** A plugin missing from an incomplete result may still exist, for example because it was locked for a moment while an editor saved it. Later phases must **not** treat absence from an incomplete scan as removal: scheduling (Phase 5) must not cancel or forget a plugin on that basis, and approval handling must not discard a record on that basis. Only a complete result shows that a plugin is gone. The scheduler keeps such a plugin as *uncertain*, suspends its launches, withholds its output until a fresh trust check confirms it, and never touches its approval (see [scheduling.md](scheduling.md#applying-a-scan)).
 
 ## Diagnostics
 

@@ -2,7 +2,7 @@
 
 This document specifies how TrayWisp runs a plugin: interpreter resolution, authorization, process creation, the child environment, output capture and decoding, timeouts, cancellation, process cleanup, results and diagnostics.
 
-**Status (Phase 4).** Everything in this document is **implemented and tested** as a library in `TrayWisp.Runtime/Execution`, except where a section says *planned*. **The engine is not exposed yet**: no CLI command, scheduler, tray or user interface calls it. Those hosts come in Phases 5 to 8 and must use it as described in [Obligations for later phases](#obligations-for-phase-5-and-later-hosts).
+**Status (Phase 4, used by Phase 5).** Everything in this document is **implemented and tested** as a library in `TrayWisp.Runtime/Execution`, except where a section says *planned*. The scheduler ([scheduling.md](scheduling.md)) runs plugins through it; **no CLI command, tray or user interface does yet**. Those hosts come in Phases 6 to 8 and must use it as described in [Obligations for later phases](#obligations-for-phase-5-and-later-hosts).
 
 **Approval is consent, not sandboxing.** A plugin that passes the trust check runs as an ordinary process with every right of your Windows account. Nothing in this engine restricts what it can read, write, start or send. See [security.md](security.md#trust-model).
 
@@ -51,6 +51,8 @@ Runtime (`TrayWisp.Runtime.Execution`):
 | `MaxStandardOutputBytes` (1 MiB), `MaxStandardErrorBytes` (64 KiB), `MaxDiagnostics` (64), `CleanupGracePeriod` (5 s) | Limits. |
 
 Core (`TrayWisp.Core.Execution`): `PluginExecutionStatus`, `ExecutionTerminationReason`, `ProcessCleanupStatus`, `InterpreterKind`, `InterpreterSource`, `ExecutionDiagnostic`/`ExecutionDiagnosticCode`, `PluginOutputDecoder` and `StandardOutputEncoding`. Core stays free of file system, process, environment and clock access (`CoreIsolationTests`).
+
+*Phase 5:* an internal overload `RunAsync(rootPath, pluginId, runOptions, expectedApproval, cancellationToken)` runs the same pipeline with the same launch-time check, which additionally requires the current approval to be exactly `expectedApproval` (see [trust-model.md](trust-model.md#execution-lease) and [scheduling.md](scheduling.md#expected-approval-generations)); an internal `TrustService` property lets the scheduler check trust with exactly the engine's trust service. The public API is unchanged.
 
 There is **no public unchecked launch path.** The process runner, the interpreter resolver and the authorization lease are internal. The internal runner can only be called with a lease, and a lease can only come from an approved authoritative trust check. No public member accepts or returns a `Process`, `ProcessStartInfo`, process handle, command line, script path or interpreter arguments (`ExecutionApiTests`). There are no overrides, no force-run flags and no automatic approvals.
 
@@ -445,11 +447,11 @@ Execution diagnostics have their own range and bound (64 per result, the last sl
 
 ## Obligations for Phase 5 and later hosts
 
-*Planned, not implemented.*
+The scheduler obligations are implemented by Phase 5 ([scheduling.md](scheduling.md)); the others are *planned, not implemented*.
 
 - Run plugins **only** through `PluginExecutionService.RunAsync`, with one long-lived `PluginTrustService` per store, shared with every other trust operation of the host.
-- **Scheduler (Phase 5):** prevent overlapping runs of the same plugin and enforce a global concurrency limit; the engine does neither. Do not retry automatically in a way that bypasses the trust check (every run checks again anyway).
-- **Revocation and changes:** cancel in-flight runs (through the token) when a plugin is revoked, disabled, removed or changed. A run already authorized is not stopped by the trust store changing.
+- **Scheduler (Phase 5), implemented:** prevent overlapping runs of the same plugin and enforce a global concurrency limit; the engine does neither. Do not retry automatically in a way that bypasses the trust check (every run checks again anyway; failures back off). Treat `CleanupIncomplete` and `ProcessCleanupStatus.Incomplete` as blocking.
+- **Revocation and changes, implemented by the scheduler:** cancel in-flight runs (through the token) when a plugin is revoked, disabled, removed or changed. A run already authorized is not stopped by the trust store changing.
 - **Output-driven actions (Phase 7):** when an action is activated, call `PluginTrustService.CheckTrust(result.Approval)` and act only on `Approved`; a `StaleApproval` or `ContentChanged` disables it. Never treat a result, its output or its approval identity as permission. Launch commands with the same direct, explicit-argument approach.
 - **Display:** show `StandardError` and diagnostics escaped, as plugin-controlled text; show `CleanupIncomplete` to the user, because processes may still be running.
 - **CLI and UI (Phases 6 and 8):** expose runs only through this engine, show the resolved interpreter path and its source, and explain that approval is consent, not sandboxing, and that PowerShell plugins need to select UTF-8 for non-ASCII output.
