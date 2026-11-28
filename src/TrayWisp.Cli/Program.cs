@@ -1,30 +1,32 @@
-using System.Reflection;
+using System.Text;
+using TrayWisp.Cli;
 
-const string Usage = """
-    Usage: traywisp [option]
+// traywisp: see docs/cli.md. The entry point only connects the console to the command application.
+var cancellation = new ConsoleCancellation();
+Console.CancelKeyPress += cancellation.OnCancelKeyPress;
 
-    Options:
-      -h, --help       Show this help.
-      --version        Show version information.
-
-    Plugin commands are not implemented yet.
-    """;
-
-switch (args)
+// A console gets text through the console API (Unicode); redirected output is UTF-8 without a byte order mark.
+TextWriter output = Console.IsOutputRedirected ? new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false)) : Console.Out;
+TextWriter error = Console.IsErrorRedirected ? new StreamWriter(Console.OpenStandardError(), new UTF8Encoding(false)) : Console.Error;
+int exitCode = ExitCodes.Failure;
+try
 {
-    case [] or ["-h"] or ["--help"]:
-        Console.WriteLine(Usage);
-        return 0;
-
-    case ["--version"]:
-        string? version = Assembly.GetEntryAssembly()?
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
-            .InformationalVersion;
-        Console.WriteLine($"traywisp {version ?? "unknown"}");
-        return 0;
-
-    default:
-        Console.Error.WriteLine($"traywisp: unrecognized arguments: {string.Join(' ', args)}");
-        Console.Error.WriteLine(Usage);
-        return 2;
+    var environment = new CliEnvironment
+    {
+        Out = output,
+        Error = error,
+        OpenInput = Console.OpenStandardInput,
+        InputRedirected = Console.IsInputRedirected,
+        LocalApplicationData = () => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify),
+        CloseCancellation = cancellation.CloseAsync,
+    };
+    exitCode = await CliApplication.RunAsync(args, environment, cancellation.Token).ConfigureAwait(false);
 }
+finally
+{
+    // The source is released and both streams are flushed whatever happened before; see ProcessFinalization.
+    Console.CancelKeyPress -= cancellation.OnCancelKeyPress;
+    exitCode = await ProcessFinalization.CompleteAsync(cancellation, output, error, exitCode).ConfigureAwait(false);
+}
+
+return exitCode;

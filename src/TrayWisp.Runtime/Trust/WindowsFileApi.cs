@@ -77,6 +77,9 @@ internal static partial class WindowsFileApi
         // The store lock file: created if missing, never shared.
         Lock,
 
+        // An existing lock file, never shared and never created (the run history's readers, which create nothing).
+        LockExisting,
+
         // An interpreter executable, read to check its format (directories open too, and are then rejected). Shared with
         // everyone, so it disturbs nothing.
         ReadShared,
@@ -95,6 +98,7 @@ internal static partial class WindowsFileApi
             OpenMode.ReadFileExclusive => (GenericRead, FileShareRead, OpenExisting, NoFollow | FileFlagSequentialScan),
             OpenMode.ReadStore => (GenericRead, FileShareRead, OpenExisting, NoFollow | FileFlagSequentialScan),
             OpenMode.Lock => (GenericRead | GenericWrite, 0u, OpenAlways, NoFollow | FileAttributeNormal),
+            OpenMode.LockExisting => (GenericRead | GenericWrite, 0u, OpenExisting, NoFollow | FileAttributeNormal),
             OpenMode.ReadShared => (GenericRead, FileShareRead | FileShareWrite | FileShareDelete, OpenExisting, NoFollow | FileFlagBackupSemantics),
             _ => throw new ArgumentOutOfRangeException(nameof(mode)),
         };

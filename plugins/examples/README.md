@@ -2,7 +2,7 @@
 
 These scripts show the plugin file format described in [docs/plugin-format.md](../../docs/plugin-format.md).
 
-> TrayWisp's execution engine can run these examples once you approve them and the interpreter is installed (see [docs/execution-engine.md](../../docs/execution-engine.md)). It is a library for now: no CLI command, scheduler or tray runs plugins yet (see [docs/roadmap.md](../../docs/roadmap.md)).
+> `traywisp run` can run these examples once you copy them to your plugin directory, review and approve them, and the interpreter is installed (see the quick start in the [README](../../README.md#quick-start-with-the-cli) and [docs/cli.md](../../docs/cli.md)). No tray displays them yet (see [docs/roadmap.md](../../docs/roadmap.md)). PowerShell examples are subject to your execution policy, which TrayWisp never changes.
 
 | File | Language | Refresh | Metadata namespace |
 | --- | --- | --- | --- |

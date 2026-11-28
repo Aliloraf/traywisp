@@ -2,7 +2,7 @@
 
 This document specifies how TrayWisp runs a plugin: interpreter resolution, authorization, process creation, the child environment, output capture and decoding, timeouts, cancellation, process cleanup, results and diagnostics.
 
-**Status (Phase 4, used by Phase 5).** Everything in this document is **implemented and tested** as a library in `TrayWisp.Runtime/Execution`, except where a section says *planned*. The scheduler ([scheduling.md](scheduling.md)) runs plugins through it; **no CLI command, tray or user interface does yet**. Those hosts come in Phases 6 to 8 and must use it as described in [Obligations for later phases](#obligations-for-phase-5-and-later-hosts).
+**Status (Phase 4, used by Phases 5 and 6).** Everything in this document is **implemented and tested** as a library in `TrayWisp.Runtime/Execution`, except where a section says *planned*. The scheduler ([scheduling.md](scheduling.md)) and `traywisp run` ([cli.md](cli.md#run)) run plugins through it; **no tray or user interface does yet**. Those hosts come in Phases 7 and 8 and must use it as described in [Obligations for later phases](#obligations-for-phase-5-and-later-hosts).
 
 **Approval is consent, not sandboxing.** A plugin that passes the trust check runs as an ordinary process with every right of your Windows account. Nothing in this engine restricts what it can read, write, start or send. See [security.md](security.md#trust-model).
 
@@ -418,7 +418,7 @@ Execution diagnostics have their own range and bound (64 per result, the last sl
 
 - Diagnostics contain paths (quoted, escaped and cut to 260 characters with `PluginDiagnosticText`), counts, exit codes and Windows error messages for error codes. They never contain environment variable values, credentials, script content, standard output, store content or the messages of arbitrary exceptions (read failures are reported by exception type and HRESULT).
 - `StandardError` is bounded and sanitized, but it is whatever the plugin printed and **may contain sensitive information**. Treat it like the plugin's own output.
-- Nothing is logged, persisted or sent anywhere: results live in memory and are returned to the caller. Execution history and log storage belong to Phase 6.
+- The engine logs, persists and sends nothing: results live in memory and are returned to the caller. Since Phase 6 a host may add a structured summary of a result to the local run history (`PluginRunHistory`, see [diagnostics.md](diagnostics.md)), which keeps no output, standard error, messages or interpreter paths; `traywisp run` does. Nothing is sent anywhere.
 
 ## Tests
 
@@ -447,11 +447,12 @@ Execution diagnostics have their own range and bound (64 per result, the last sl
 
 ## Obligations for Phase 5 and later hosts
 
-The scheduler obligations are implemented by Phase 5 ([scheduling.md](scheduling.md)); the others are *planned, not implemented*.
+The scheduler obligations are implemented by Phase 5 ([scheduling.md](scheduling.md)) and the CLI obligations by Phase 6 ([cli.md](cli.md)); the others are *planned, not implemented*.
 
 - Run plugins **only** through `PluginExecutionService.RunAsync`, with one long-lived `PluginTrustService` per store, shared with every other trust operation of the host.
 - **Scheduler (Phase 5), implemented:** prevent overlapping runs of the same plugin and enforce a global concurrency limit; the engine does neither. Do not retry automatically in a way that bypasses the trust check (every run checks again anyway; failures back off). Treat `CleanupIncomplete` and `ProcessCleanupStatus.Incomplete` as blocking.
 - **Revocation and changes, implemented by the scheduler:** cancel in-flight runs (through the token) when a plugin is revoked, disabled, removed or changed. A run already authorized is not stopped by the trust store changing.
 - **Output-driven actions (Phase 7):** when an action is activated, call `PluginTrustService.CheckTrust(result.Approval)` and act only on `Approved`; a `StaleApproval` or `ContentChanged` disables it. Never treat a result, its output or its approval identity as permission. Launch commands with the same direct, explicit-argument approach.
 - **Display:** show `StandardError` and diagnostics escaped, as plugin-controlled text; show `CleanupIncomplete` to the user, because processes may still be running.
-- **CLI and UI (Phases 6 and 8):** expose runs only through this engine, show the resolved interpreter path and its source, and explain that approval is consent, not sandboxing, and that PowerShell plugins need to select UTF-8 for non-ASCII output.
+- **CLI (Phase 6), implemented:** `traywisp run` runs exactly one plugin through `RunAsync`, shows the resolved interpreter path and its source, reports incomplete cleanup prominently, checks `CheckTrust(result.Approval)` on the same trust service before showing output, and its documentation explains that approval is consent, not sandboxing, and that PowerShell plugins need to select UTF-8 for non-ASCII output ([cli.md](cli.md#run)). `traywisp doctor` shows the resolution a run would use through `InterpreterLookup`, the engine's own resolver, without launching anything ([diagnostics.md](diagnostics.md#interpreter-lookup)).
+- **UI (Phase 8):** expose runs only through this engine, show the resolved interpreter path and its source, and explain the same.

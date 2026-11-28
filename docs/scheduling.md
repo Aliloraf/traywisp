@@ -2,7 +2,7 @@
 
 This document specifies how TrayWisp keeps the plugins of one plugin root discovered, trust-checked and refreshed: initial discovery, interval and manual refreshes, file system watching, reconciliation, cancellation after relevant changes, the concurrency limit, publication of output, incomplete-cleanup protection and shutdown.
 
-**Status (Phase 5).** Everything in this document is **implemented and tested** as a library in `TrayWisp.Runtime/Scheduling` and `TrayWisp.Core/Scheduling`, except where a section says *planned*. **No host uses the scheduler yet**: the CLI and the desktop application are unchanged, and there is no tray icon or status bar. Phases 6 to 9 will consume it as described in [Requirements for future consumers](#requirements-for-future-cli-and-ui-consumers).
+**Status (Phase 5).** Everything in this document is **implemented and tested** as a library in `TrayWisp.Runtime/Scheduling` and `TrayWisp.Core/Scheduling`, except where a section says *planned*. **No host uses the scheduler yet**: the Phase 6 command line runs one plugin per invocation without it (see [cli.md](cli.md#cli-runs-and-the-scheduler)), the desktop application is unchanged, and there is no tray icon or status bar. Phases 7 to 9 will consume it as described in [Requirements for future consumers](#requirements-for-future-cli-and-ui-consumers).
 
 **Approval is consent, not sandboxing.** The scheduler only decides *when* the execution engine is asked to run an approved plugin. A plugin that runs has every right of your Windows account. See [security.md](security.md#trust-model).
 
@@ -365,7 +365,7 @@ Scheduler diagnostics (`SchedulerDiagnostic`) have their own range. Discovery (`
 
 ## Requirements for future CLI and UI consumers
 
-*Planned obligations for Phases 6 to 9.*
+*Planned obligations for Phases 7 to 9.* The Phase 6 CLI does not use the scheduler: each invocation makes its own trust checks and runs through the engine, so the per-instance guarantees below (no overlap, concurrency limit, cleanup blocking) do not coordinate separate CLI processes (see [cli.md](cli.md#cli-runs-and-the-scheduler)). A long-lived host must notice approvals and revocations made by CLI invocations through periodic reconciliation, because no notification reaches it.
 
 - Create one `PluginTrustService`, one `PluginExecutionService` on it and one `PluginScheduler` per root, for the host's lifetime. Never run a second scheduler for the same root.
 - Read `Snapshot`, wait with `WaitForChangeAsync(snapshot.Revision, token)`, and redraw from the newest snapshot; never cache output across revisions or treat it, or `ObservedTrustStatus`, as authorization.
@@ -378,7 +378,7 @@ Scheduler diagnostics (`SchedulerDiagnostic`) have their own range. Discovery (`
 
 ## Remaining limitations
 
-- No host uses the scheduler yet; the CLI and desktop application are unchanged.
+- No host uses the scheduler yet; the CLI runs single plugins without it, and the desktop application is unchanged.
 - Enabled state and cleanup incidents are in memory only and per instance; there is no persistent settings subsystem. A plugin removed by a complete scan and reappearing is enabled again.
 - Detection of external trust store changes and missed notifications is periodic (see [Detection latency](#detection-latency)).
 - A transient `PluginUnavailable` observation (for example a file briefly locked by another program during a periodic check) withdraws output and cancels a run; the plugin runs again once a later check approves it.
@@ -387,7 +387,7 @@ Scheduler diagnostics (`SchedulerDiagnostic`) have their own range. Discovery (`
 - A cancellation that arrives while the engine is creating the process cannot interrupt that call (unchanged from Phase 4).
 - The retained-output cost is an estimate of the scheduler-owned model, not a heap measurement, and excludes snapshots consumers keep.
 - Filesystem race limitations of discovery and trust validation, the post-start job assignment window, untracked descendants, and the deferred `PSModulePath` compatibility concern of Windows PowerShell started from PowerShell 7 (see [execution-engine.md](execution-engine.md#real-interpreter-tests)) are unchanged.
-- The scheduler does not keep standard error; the latest run's bounded diagnostics are its only run information (bounded local diagnostics storage is Phase 6).
+- The scheduler does not keep standard error; the latest run's bounded diagnostics are its only run information. It does not write the Phase 6 run history ([diagnostics.md](diagnostics.md)); a future host can record scheduled runs with `PluginRunHistory`.
 - A cancellation source whose owner never ends is left to finalization: the source of an attempt that stays registered after a failed completion, and the scheduler's own source after a shutdown whose outstanding work never ends (for example a call that cannot be interrupted). If even the handler of a failed completion fails, the attempt's source is kept too, unless the attempt is no longer registered.
 
 ## Tests

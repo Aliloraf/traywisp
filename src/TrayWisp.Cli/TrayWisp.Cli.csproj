@@ -12,4 +12,8 @@
     <ProjectReference Include="..\TrayWisp.Runtime\TrayWisp.Runtime.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="TrayWisp.Cli.Tests" />
+  </ItemGroup>
+
 </Project>

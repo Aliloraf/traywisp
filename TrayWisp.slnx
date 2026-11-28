@@ -8,6 +8,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/TrayWisp.Core.Tests/TrayWisp.Core.Tests.csproj" />
     <Project Path="tests/TrayWisp.Runtime.Tests/TrayWisp.Runtime.Tests.csproj" />
+    <Project Path="tests/TrayWisp.Cli.Tests/TrayWisp.Cli.Tests.csproj" />
     <Project Path="tests/TrayWisp.TestHelper/TrayWisp.TestHelper.csproj" />
   </Folder>
   <Folder Name="/Solution Items/">

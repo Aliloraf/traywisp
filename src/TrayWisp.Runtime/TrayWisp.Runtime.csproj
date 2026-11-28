@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Plugin discovery, trust and approval; execution and scheduling (planned). May reference TrayWisp.Core only. -->
+  <!-- Plugin discovery, trust and approval, execution, scheduling and run diagnostics. May reference TrayWisp.Core only. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <!-- Required by LibraryImport, used for the few Windows file APIs the trust checks need (Trust/WindowsFileApi.cs). -->
@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="TrayWisp.Runtime.Tests" />
+    <!-- The CLI tests build execution services with the internal test hooks (process-start counting, injected failures). -->
+    <InternalsVisibleTo Include="TrayWisp.Cli.Tests" />
   </ItemGroup>
 
 </Project>

@@ -1,6 +1,6 @@
 # Security model
 
-TrayWisp's core job is to run scripts on your behalf, so its security model has to be stated plainly. This document describes the trust model, the discovery, output parsing, approval and execution safeguards that are **implemented**, and the safeguards that are still **planned**. **As of Phase 5, TrayWisp discovers plugin files, reads their metadata, parses plugin output text, records explicit approvals with an authoritative trust check, has an execution engine that runs an approved plugin under that check, and has a scheduler that refreshes approved plugins through that engine and reacts to changes. Neither is exposed through the CLI or the desktop app yet, and TrayWisp never acts on plugin output.** [Plugin discovery](#plugin-discovery-implemented), [Output parsing](#output-parsing-implemented), [Plugin approval](#plugin-approval-implemented), [Plugin execution](#plugin-execution-implemented) and [Scheduling and hot reload](#scheduling-and-hot-reload-implemented) describe implemented controls. Everything under [Planned safeguards](#planned-safeguards) is not implemented yet. They are design commitments that later phases (see [roadmap.md](roadmap.md)) must meet or explicitly revise.
+TrayWisp's core job is to run scripts on your behalf, so its security model has to be stated plainly. This document describes the trust model, the discovery, output parsing, approval and execution safeguards that are **implemented**, and the safeguards that are still **planned**. **As of Phase 6, TrayWisp discovers plugin files, reads their metadata, parses plugin output text, records explicit approvals with an authoritative trust check, has an execution engine that runs an approved plugin under that check, and has a scheduler that refreshes approved plugins through that engine and reacts to changes. The `traywisp` command line exposes discovery, inspection, approval, revocation, trust checks, single runs through the engine, output validation and host diagnostics, and keeps a bounded local run history. No tray or desktop host runs plugins yet, and TrayWisp never acts on plugin output.** [Plugin discovery](#plugin-discovery-implemented), [Output parsing](#output-parsing-implemented), [Plugin approval](#plugin-approval-implemented), [Plugin execution](#plugin-execution-implemented), [Scheduling and hot reload](#scheduling-and-hot-reload-implemented), [Command-line interface](#command-line-interface-implemented) and [Diagnostics storage](#diagnostics-storage-implemented) describe implemented controls. Everything under [Planned safeguards](#planned-safeguards) is not implemented yet. They are design commitments that later phases (see [roadmap.md](roadmap.md)) must meet or explicitly revise.
 
 To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 
@@ -97,7 +97,7 @@ Limitations (details in [trust-model.md](trust-model.md#security-guarantees-and-
 
 ## Plugin execution (implemented)
 
-The execution engine (Phase 4, specified in [execution-engine.md](execution-engine.md)) is the only code that starts plugins. It is a library: the scheduler (Phase 5) calls it; no CLI command or tray does yet.
+The execution engine (Phase 4, specified in [execution-engine.md](execution-engine.md)) is the only code that starts plugins. The scheduler (Phase 5) and `traywisp run` (Phase 6) call it; no tray does yet.
 
 ### Trust checks on every execution path
 
@@ -106,7 +106,7 @@ The execution engine (Phase 4, specified in [execution-engine.md](execution-engi
 - The internal process runner requires the lease that only an approved check produces. No public member exposes processes, start information, command lines or interpreter arguments. There are no overrides or force-run flags.
 - The engine uses the host's long-lived `PluginTrustService`, so unsaved invalidations keep being enforced.
 
-Scheduled runs and hot reload (Phase 5) go through this engine, with the approval generation each run was selected under (see [Scheduling and hot reload](#scheduling-and-hot-reload-implemented)). *Planned:* manual runs from the tray or management interface and CLI runs must go through it as well (Phases 6 to 8). Output-driven actions must be checked with `CheckTrust(approvalIdentity)` when activated. If an override is ever added, for example a one-off CLI run of an unapproved plugin, it must be an explicit per-invocation user action and be recorded in diagnostics. Disabling or revoking a plugin must cancel its in-flight runs; the engine supports cancellation, the host must request it.
+Scheduled runs and hot reload (Phase 5) go through this engine, with the approval generation each run was selected under (see [Scheduling and hot reload](#scheduling-and-hot-reload-implemented)), and so do CLI runs (Phase 6, see [Command-line interface](#command-line-interface-implemented)). *Planned:* manual runs from the tray or management interface must go through it as well (Phases 7 and 8). Output-driven actions must be checked with `CheckTrust(approvalIdentity)` when activated. If an override is ever added, for example a one-off CLI run of an unapproved plugin, it must be an explicit per-invocation user action and be recorded in diagnostics. Disabling or revoking a plugin must cancel its in-flight runs; the engine supports cancellation, the host must request it.
 
 ### Process launch: explicit arguments, not shell command strings
 
@@ -174,7 +174,7 @@ During a run, the checked plugin file and the directories on its path inside the
 
 - Each result records the start time, monotonic duration, exit code, termination reason, capture and truncation state, cleanup outcome, the resolved interpreter and a bounded, sanitized stderr tail, with stable codes `TW600`–`TW699` next to the unchanged trust and parser diagnostics.
 - Diagnostics never contain environment variable values, credentials, script content, stdout or arbitrary exception messages. The stderr tail can contain whatever a plugin prints, including sensitive data; treat it like the plugin's own output.
-- Phase 4 keeps diagnostics in memory and returns them. Nothing is logged, stored or sent.
+- The engine keeps diagnostics in memory and returns them. Since Phase 6 the CLI stores a structured summary of each of its runs locally, without output, standard error or messages (see [Diagnostics storage](#diagnostics-storage-implemented)). Nothing is ever sent.
 
 ## Scheduling and hot reload (implemented)
 
@@ -192,6 +192,30 @@ The scheduler (Phase 5, specified in [scheduling.md](scheduling.md)) decides onl
 
 Limitations: changes made by other processes to the trust store, and changes a watcher missed, are found by periodic reconciliation (30 s by default), not instantly; a run already authorized keeps running until its cancellation takes effect; and the Phase 4 limits (time-of-check windows, post-start job assignment) are unchanged. See [scheduling.md](scheduling.md#remaining-limitations).
 
+## Command-line interface (implemented)
+
+The `traywisp` command line (Phase 6, specified in [cli.md](cli.md)) is an orchestration layer over the services above and adds no execution or trust path of its own:
+
+- **No new authorization.** `run` uses `PluginExecutionService.RunAsync` and its launch-time check; there is no force flag, no automatic approval, no wildcard or implicit plugin selection, no plugin arguments and no shell. `approve` requires the fingerprint the user reviewed and lets the trust service rehash the file before saving; inspection, listing, status and validation never approve. Only the named plugin runs, never a scheduler or other plugins.
+- **Output after a fresh check only.** A run's output is shown only after `CheckTrust(result.Approval)` on the same trust service confirms it; otherwise it is withheld from text and JSON alike. Output actions are displayed as inert data, never executed, opened or resolved.
+- **Validation first.** The complete command line is validated (exact options, `PluginId`, `ContentFingerprint` and `PluginRoot` syntax, numeric ranges, argument limits) before anything touches the file system; then roots and storage directories are validated read-only in the drive → directory chain → short-name order before they are used. Nothing creates the plugin root. Storage must not overlap the plugin root.
+- **Terminal safety.** All untrusted text is escaped for display (control and format characters, bidirectional controls, separators and lone surrogates become `\uXXXX`), shown after fixed labels on single lines and bounded; JSON output is ASCII and has a fixed, versioned schema without exception details. Lookalike characters are not detected.
+- **Bounded input.** `validate-output` reads at most 1 MiB + 1 byte from redirected standard input and refuses an interactive console.
+- **Read-only diagnosis.** `doctor` starts no script or interpreter, creates nothing and does not read or lock the trust store; it says which conditions it did not check (interpreter authenticity and version, PowerShell execution policy, store content).
+- **Cancellation without abandonment.** Ctrl+C cancels through the engine, which terminates the run; the CLI waits for the cleanup result and reports incomplete cleanup prominently.
+
+Limitations: separate CLI invocations are not coordinated by the scheduler's per-instance guarantees (two invocations can run the same plugin concurrently; an incomplete-cleanup block does not carry over to the next invocation), each invocation has its own trust service (so an unsaved invalidation is forgotten when it exits), and the time-of-check windows of the engine are unchanged. See [cli.md](cli.md#cli-runs-and-the-scheduler).
+
+## Diagnostics storage (implemented)
+
+The run history (Phase 6, specified in [diagnostics.md](diagnostics.md)):
+
+- **Local only.** One file under `%LOCALAPPDATA%\TrayWisp\diagnostics` (or the configured data directory). Nothing is uploaded, sent or analysed; there is no telemetry.
+- **Summaries, not content.** Statuses, exit codes, durations, byte counts, cleanup outcome, publication decision and diagnostic codes. Never output, labels, actions, standard error, script content, environment variables, credentials, interpreter paths, command lines, messages or the root's path. The plugin identity and a root identifier (a truncated hash, not anonymous) are stored.
+- **Bounded and strict.** At most 200 records and 1 MiB, enforced on bytes actually read and before every write, oldest records removed first; strict, versioned, all-or-nothing parsing; an invalid or unsupported file is reported and never overwritten.
+- **Safe storage.** Its own lock file (never the approval store's), atomic same-directory replacement, and the trust store's path rules (no links, aliases, remote or case-sensitive directories; single-link regular files).
+- **Never an authorization.** A record never permits or blocks a run, and a failed write never changes a run's result or exposes withheld output.
+
 ## Planned safeguards
 
 ### Output-driven actions
@@ -205,13 +229,9 @@ The SwiftBar/xbar text format lets output lines define actions, such as running 
 - The interface and diagnostics show the exact program and arguments, or the URL, behind each action.
 - If a plugin copies untrusted data, such as API responses, into its action parameters, TrayWisp cannot tell. That is the plugin author's responsibility.
 
-### Diagnostics storage
-
-- Run diagnostics will be stored locally with bounded retention and never sent anywhere by TrayWisp (Phase 6). Environment variables will not be recorded.
-
 ### Plugin directory
 
-- The default plugin directory will be per-user. If it, or a plugin in it, is writable by other users, those users can effectively run code as you. TrayWisp will warn about this where it can detect it.
+- The default plugin directory is per-user (`%LOCALAPPDATA%\TrayWisp\plugins`, since Phase 6), and you create it yourself. If it, or a plugin in it, is writable by other users, those users can effectively run code as you. *Planned:* TrayWisp will warn about this where it can detect it; `doctor` does not check permissions yet.
 
 ## Process isolation limitations
 

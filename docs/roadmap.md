@@ -10,7 +10,7 @@ This roadmap is **tentative**. Scope and order beyond the current phase may chan
 | 3 | Plugin trust and approval | **Complete** |
 | 4 | Script execution engine | **Complete** |
 | 5 | Scheduling and hot reload | **Complete** |
-| 6 | CLI and plugin diagnostics | Planned |
+| 6 | CLI and plugin diagnostics | **Implemented** (awaiting review) |
 | 7 | Native Windows system tray | Planned |
 | 8 | Plugin management interface | Planned |
 | 9 | Customizable status bar | Planned |
@@ -105,10 +105,23 @@ Specified in [scheduling.md](scheduling.md).
 
 Not in Phase 5: CLI commands, Desktop, tray or status bar integration, persistent plugin settings, execution of output actions, automatic approval, process enumeration, native launcher, sandboxing.
 
-## Phase 6: CLI and plugin diagnostics
+## Phase 6: CLI and plugin diagnostics (implemented)
 
-- `traywisp` commands to list plugins, show metadata, validate output, approve or revoke, run once (subject to the same trust checks) and show diagnostics.
-- Bounded, local storage of diagnostics.
+Specified in [cli.md](cli.md) and [diagnostics.md](diagnostics.md).
+
+- `traywisp list`, `inspect`, `approve`, `revoke`, `status`, `run`, `validate-output`, `doctor` and `logs`, with command help, built on the existing discovery, trust service, execution engine, decoder and parser (no second implementation of any of them).
+- A small, exact command-line parser with the standard library: the command first, options and operand in any order, `--` ends options, strict validation of identities (`PluginId`), fingerprints (`ContentFingerprint`), paths (`PluginRoot`) and culture-independent numbers, bounded arguments, no expansion and no raw echo of unrecognized arguments. The complete request is validated before anything touches the file system.
+- Locations: `%LOCALAPPDATA%\TrayWisp\plugins`, the Phase 3 trust store and `%LOCALAPPDATA%\TrayWisp\diagnostics` by default; `--root` and `--data-dir`; no configuration file; no automatic creation of the plugin root; storage never overlapping the plugin root; read-only validation in the drive → directory chain → short-name order (the scheduler's root validation, extracted as `PluginRootValidation`, and `StorageLocation`).
+- Approval only of an explicitly supplied, reviewed fingerprint, rehashed by the trust service; revocation without inspection; authoritative status checks that may persist invalidations.
+- Single runs through `PluginExecutionService.RunAsync`, with explicit interpreters (no fallback), timeouts, a fresh `CheckTrust(result.Approval)` before output is shown, inert actions, the bounded standard error tail on request, prominent incomplete-cleanup reporting, no scheduler and no other plugin.
+- Output validation from bounded redirected standard input with the engine's strict decoder.
+- `doctor`: platform, root and storage checks, and the engine's interpreter resolution (`InterpreterLookup`) without running anything, with unchecked conditions named.
+- One terminal safety policy for all untrusted text, and a versioned, ASCII JSON document (`--json`) with stable statuses and codes; a documented exit-code contract; Ctrl+C cancellation that waits for the engine's cleanup.
+- A bounded local run history (`PluginRunHistory`): structured summaries only, 200 records and 1 MiB, its own lock, strict versioned parsing, atomic replacement, corrupt files never overwritten, nothing sent anywhere.
+- Diagnostics `TW800`–`TW849` (storage) and `TW850`–`TW899` (CLI).
+- Tests: a new `TrayWisp.Cli.Tests` project (in-process commands with the helper interpreter and process-start observation, and process-level tests of the built `traywisp.exe`), and Runtime tests for the history and the read-only checks.
+
+Not in Phase 6: an interactive shell, watch mode, a daemon, IPC with a desktop host, a tray, a persistent scheduler, persistent settings, a clear-history command, execution of output actions, automatic approval, telemetry.
 
 ## Phase 7: Native Windows system tray
 
