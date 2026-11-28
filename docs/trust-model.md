@@ -2,7 +2,7 @@
 
 This document specifies plugin trust and approval: how TrayWisp identifies a plugin for approval, fingerprints its content, records explicit approvals, invalidates them, and decides whether a plugin may run.
 
-**Status (Phase 3, used by Phases 4 and 5).** Everything in this document is **implemented and tested**, except where a section says *planned*. The execution engine ([execution-engine.md](execution-engine.md)) calls the authoritative check immediately before every launch, and the scheduler ([scheduling.md](scheduling.md)) uses the same trust service for its own checks. Later phases must use it as described in [Integration obligations](#integration-obligations-for-later-phases).
+**Status (Phase 3, used by Phases 4 to 6).** Everything in this document is **implemented and tested**, except where a section says *planned*. The execution engine ([execution-engine.md](execution-engine.md)) calls the authoritative check immediately before every launch, the scheduler ([scheduling.md](scheduling.md)) uses the same trust service for its own checks, and the command line ([cli.md](cli.md)) exposes inspection, approval, revocation and the trust check. Later phases must use it as described in [Integration obligations](#integration-obligations-for-later-phases).
 
 **Approval is consent, not sandboxing.** An approved plugin runs with all of your user account's access. Approval only records that you chose to trust exactly this content at this location. See [security.md](security.md#trust-model).
 
@@ -197,7 +197,7 @@ What it does **not** achieve:
 
 ## Explicit approval workflow
 
-1. `Inspect(root, id)` returns the validated `PluginTrustKey` and current `PluginFingerprint`. A future CLI or user interface shows the plugin (and ideally its content) for review.
+1. `Inspect(root, id)` returns the validated `PluginTrustKey` and current `PluginFingerprint`. `traywisp inspect` (Phase 6) shows it with the plugin's metadata and validated path for review; a future user interface should also show the content.
 2. The user approves. The caller passes the **fingerprint the user reviewed** to `Approve(root, id, expectedFingerprint)`.
 3. Under the store lock, `Approve` reads the current store, validates the root and path again, and hashes the file again. It saves the approval only if the new hash equals the expected fingerprint. Otherwise it returns `FingerprintMismatch` with the current fingerprint and approves nothing. A file changed after review is never approved silently. A caller-supplied hash is only a statement of intent, never proof of the file's content.
 4. If the plugin is already approved for exactly these bytes, the result is `AlreadyApproved`. The existing record, including its generation and timestamp, is kept, and the store is not rewritten.
@@ -219,7 +219,7 @@ Cancellation is observed up to the moment saving starts. After that the operatio
 
 The approval timestamp is informational. Time never establishes or extends trust.
 
-This phase has no approval dialog, no CLI commands and no source viewer.
+Phase 3 had no user interface. Since Phase 6, `traywisp inspect` and `traywisp approve PLUGIN_ID --sha256 FINGERPRINT` implement steps 1 and 2 on the command line, with no interactive prompt: the explicit fingerprint is the confirmation (see [cli.md](cli.md#approve)). There is still no approval dialog or source viewer.
 
 ## Invalidation and revocation
 
@@ -431,9 +431,10 @@ Windows-specific behaviour is tested against real temporary directories and isol
 
 ## Integration obligations for later phases
 
-Phase 4 implemented the first obligation below (see [execution-engine.md](execution-engine.md#authorization)) and Phase 5 the scheduling obligation (see [scheduling.md](scheduling.md)); the others are *planned, not implemented*. Later phases must:
+Phase 4 implemented the first obligation below (see [execution-engine.md](execution-engine.md#authorization)), Phase 5 the scheduling obligation (see [scheduling.md](scheduling.md)) and Phase 6 the CLI obligation (see [cli.md](cli.md)); the others are *planned, not implemented*. Later phases must:
 
 - **Phase 4 (execution), implemented.** Call `CheckTrust` immediately before every launch, on every path: scheduled, manual, CLI and output-driven. Launch only when it returns `Approved`, and launch **exactly the `ValidatedFilePath` of that immediate check**. Never reconstruct a launch path from the root and the case-insensitive identity, from an approval identity, or from an earlier discovery descriptor or decision. Use one long-lived `PluginTrustService` per store for all authoritative checks, so that [unsaved invalidations](#unsaved-invalidations) keep being enforced and retried. Never cache a decision, never treat a fingerprint, a discovery result or an earlier decision as authorization, and add no bypass. If a one-off override is ever added, it must be an explicit per-invocation user action recorded in diagnostics (see [security.md](security.md#trust-checks-on-every-execution-path)). Associate each run's output with the decision's `Approval` identity. Narrow the TOCTOU window further where practical, and document what remains. Hosts satisfy this by running plugins only through `PluginExecutionService.RunAsync`.
 - **Phase 4/7 (output-driven actions).** When an action is activated, call `CheckTrust(approvalIdentity)` with the identity of the run that produced the output, and act only on `Approved`. A `StaleApproval` disables the action.
 - **Phase 5 (scheduling and hot reload), implemented.** Cancel in-flight runs when a check denies a plugin (any observation other than the same approval invalidates the plugin's state and requests cancellation). Never revoke or prune an approval because a plugin is missing from an incomplete discovery result (the scheduler never revokes or prunes approvals at all; a plugin missing from an incomplete scan is kept as uncertain). Use the host's single trust service for every check (the scheduler uses the execution service's). After a host approves or revokes, it calls `PluginScheduler.NotifyTrustChanged`.
-- **Phases 6 and 8 (CLI and UI).** Present `Inspect` results for review, preferably with the content itself, and pass the reviewed fingerprint to `Approve`. Show diagnostics escaped. Explain that approval is consent, not sandboxing.
+- **Phase 6 (CLI), implemented.** `inspect` presents `Inspect` results for review (fingerprint, validated path, metadata; not the content), `approve` passes the reviewed fingerprint to `Approve`, `revoke` and `status` use `Revoke` and `CheckTrust`, all with one trust service per invocation; diagnostics are escaped, and the text explains that approval is consent, not sandboxing (see [cli.md](cli.md)). Because each invocation has its own service, an unsaved invalidation is forgotten when the invocation ends.
+- **Phase 8 (UI).** Present `Inspect` results for review, preferably with the content itself, and pass the reviewed fingerprint to `Approve`. Show diagnostics escaped. Explain that approval is consent, not sandboxing.

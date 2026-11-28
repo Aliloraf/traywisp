@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The command application (in-process tests through its internals) and the built traywisp.exe next to the tests
+         (process-level tests). -->
+    <ProjectReference Include="..\..\src\TrayWisp.Cli\TrayWisp.Cli.csproj" />
+    <ProjectReference Include="..\..\src\TrayWisp.Runtime\TrayWisp.Runtime.csproj" />
+    <!-- Built and copied next to the tests, which configure it explicitly as a controlled stand-in interpreter. -->
+    <ProjectReference Include="..\TrayWisp.TestHelper\TrayWisp.TestHelper.csproj" />
+  </ItemGroup>
+
+</Project>

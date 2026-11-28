@@ -116,8 +116,8 @@ internal static class OutputText
     }
 
     // Default_Ignorable_Code_Point (Unicode 16.0 DerivedCoreProperties.txt) plus U+2800 BRAILLE PATTERN BLANK,
-    // which is not default-ignorable but renders as an empty cell.
-    private static bool IsDefaultIgnorableOrBlank(int c) => c is 0x00AD or 0x034F or 0x061C or (>= 0x115F and <= 0x1160) or (>= 0x17B4 and <= 0x17B5)
+    // which is not default-ignorable but renders as an empty cell. Also published as UnicodeVisibility.IsDefaultIgnorableOrBlank.
+    internal static bool IsDefaultIgnorableOrBlank(int c) => c is 0x00AD or 0x034F or 0x061C or (>= 0x115F and <= 0x1160) or (>= 0x17B4 and <= 0x17B5)
         or (>= 0x180B and <= 0x180F) or (>= 0x200B and <= 0x200F) or (>= 0x202A and <= 0x202E) or (>= 0x2060 and <= 0x206F)
         or 0x2800 or 0x3164 or (>= 0xFE00 and <= 0xFE0F) or 0xFEFF or 0xFFA0 or (>= 0xFFF0 and <= 0xFFF8)
         or (>= 0x1BCA0 and <= 0x1BCA3) or (>= 0x1D173 and <= 0x1D17A) or (>= 0xE0000 and <= 0xE0FFF);

@@ -76,18 +76,13 @@ internal sealed class ProductionSchedulerOperations(PluginExecutionService execu
             return new RootValidation(RootProblem(root, "plugin scheduling is only supported on Windows."));
         }
 
-        // Drive type, then the directory chain, held open; never the short-name expansion before both are validated.
-        PathCheck check = TrustPaths.OpenDirectoryChain(root, rejectCaseSensitiveAncestors: true, createMissing: false, hold: true, out SafeFileHandle? handle);
-        if (check.Problem != PathProblem.None)
+        // Drive type, then the directory chain, held open; never the short-name expansion before both are validated. The
+        // same validation as PluginRootValidation.Check, which the CLI uses.
+        TrustFailure? failure = PluginRootValidation.Validate(root, hold: true, out SafeFileHandle? handle);
+        if (failure is not null)
         {
-            TrustDiagnostic diagnostic = PluginFileInspector.RootFailure(root, check).Diagnostic;
+            TrustDiagnostic diagnostic = failure.Diagnostic;
             return new RootValidation(RootProblem(root, $"TW{(int)diagnostic.Code}: {diagnostic.Message}"));
-        }
-
-        if (!TrustPaths.IsUnchangedByFullPath(root.Value))
-        {
-            handle!.Dispose();
-            return new RootValidation(RootProblem(root, "the path is an alias, for example through a short (8.3) name."));
         }
 
         RootIdentity? identity = WindowsFileApi.TryGetFileId(handle!, out (ulong Volume, ulong Low, ulong High) id, out _)
